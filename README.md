@@ -1,1 +1,101 @@
-# yoin
+<div align="center">
+  <img src="assets/icon.png" alt="yoin" width="96">
+
+  <h1>yoin</h1>
+
+  [![License: GPL v3+](https://img.shields.io/badge/License-GPLv3%2B-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+  [![Latest Release](https://img.shields.io/github/v/release/yrmuq/yoin?include_prereleases)](https://github.com/yrmuq/yoin/releases)
+
+  <p>
+    A native KDE tray program for Home Assistant. It keeps a websocket open, shows two buttons for a switch or a script, and delivers notifications through the <code>mobile_app</code> local push channel. No browser engine and no HTML5 push.
+  </p>
+</div>
+
+---
+
+> [!NOTE]
+> **Active Beta Development:** `yoin` is currently in active beta development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yoin/releases) page.
+>
+> **Independent Project:** `yoin` is an independent project and is not affiliated with or endorsed by Home Assistant or the Open Home Foundation.
+
+---
+
+## Features
+
+* **KDE tray:** A StatusNotifier icon. The first launch opens settings. After Home Assistant accepts the token, a left click opens a small rounded window just above the tray.
+* **Two actions:** Each button is a `switch` (toggle) or a `script` (turn on). Nothing else is listed.
+* **Notifications:** `yoin` registers its own `mobile_app` device and subscribes to `mobile_app/push_notification_channel`. Home Assistant delivers `notify.mobile_app_<device>` over the websocket. The desktop notification center shows it. There is no HTML5 registration and no cloud push: if `yoin` is not running, the notification is missed.
+* **Session start:** Settings can write an XDG autostart entry that waits until the Plasma panel is up.
+* **Persistent configuration:** The address, token, device id, and button choices are stored in `~/.config/yoin/config.json` (`0600`).
+
+---
+
+## Controls
+
+| Input | Action |
+| :--- | :--- |
+| Left click (tray) | Open or close the button window. |
+| Right click (tray) | Settings and Quit. |
+| Button | Run the bound switch or script. An empty button opens Settings. |
+
+Send a notification from Home Assistant with the device name chosen in Settings. A device named `Fedora` is `notify.mobile_app_fedora`.
+
+```yaml
+action: notify.mobile_app_fedora
+data:
+  title: Door
+  message: The door is open.
+```
+
+---
+
+## Installation & Usage
+
+### Architecture & Format Support
+
+| Format | `x86_64` | `arm64` |
+| :--- | :---: | :---: |
+| `AppImage` | ✅ | ❌ |
+| `Flatpak` | ❌ | ❌ |
+
+### AppImage
+
+The pre-release `AppImage` bundles `Python` and `PySide6`. It does not bundle a browser. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yoin/releases) page.
+
+For a menu entry, use `Gear Lever` ([Flathub](https://flathub.org/apps/it.mijorus.gearlever)).
+
+Alternatively, grant execution permissions and launch it from the terminal:
+
+```sh
+chmod +x yoin-x86_64.AppImage
+./yoin-x86_64.AppImage
+```
+
+If the host system lacks `FUSE` support, extract and run the bundle directly:
+
+```sh
+./yoin-x86_64.AppImage --appimage-extract-and-run
+```
+
+### Flatpak
+
+`Flatpak` packaging is in `packaging/flatpak/` and is planned for a future stable release. It is not published. `arm64` waits for the same release.
+
+### From source
+
+`PySide6` and a Plasma session with a tray. The program talks to StatusNotifier through Qt, which is what Plasma shows.
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python -m yoin
+```
+
+---
+
+## License
+
+`yoin` is free software distributed under `GPL-3.0-or-later`. See `LICENSE` and `NOTICE`. Bundled `AppImage` component licenses are listed in `packaging/appimage/BUNDLED.txt`.
+
+*Copyright (C) 2026 yrmuq.*

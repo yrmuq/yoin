@@ -1,0 +1,89 @@
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# An annotated tag vX.Y.Z builds the AppImage and publishes
+# "yoin X.Y.Z beta". The tag message is the release body.
+# Use only the sections that apply, in this order:
+#   **Features:**
+#   **Fixes:**
+#   **Changes:**
+# No run commands and no test-build banner. Those stay in the README.
+# A manual run builds the image and does not publish a release.
+
+name: AppImage
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: packaging/appimage/build/cache
+          key: yoin-appimage-deps-20261013
+
+      - name: Install file
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y file
+
+      - name: Build
+        run: bash packaging/appimage/build.sh
+
+      - name: Publish beta release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          TAG="${GITHUB_REF_NAME}"
+          case "$TAG" in
+            *-test)
+              echo "leaving the old test tag alone"
+              exit 0
+              ;;
+          esac
+          VER="${TAG#v}"
+          VER="${VER%-alpha}"
+          case "$VER" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "tag ${TAG} is not a version"
+              exit 1
+              ;;
+          esac
+          git fetch origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          git tag -l --format='%(contents)' "$TAG" > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "the annotated tag message is the release notes, and it is empty" >&2
+            exit 1
+          fi
+          if grep -E 'Test build|chmod |\./yoin' notes.md; then
+            echo "release notes must not include run commands or a test-build banner" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/yoin-x86_64.AppImage \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "yoin ${VER} beta" \
+              --notes-file notes.md
+          else
+            gh release create "$TAG" dist/yoin-x86_64.AppImage \
+              --repo "$GITHUB_REPOSITORY" \
+              --prerelease \
+              --title "yoin ${VER} beta" \
+              --notes-file notes.md
+          fi

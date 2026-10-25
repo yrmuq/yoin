@@ -1,0 +1,18 @@
+#!/bin/sh
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Entry point for the pre-release AppImage. The image is not a 1.0 release.
+set -eu
+HERE="$(dirname "$(readlink -f "$0")")"
+export YOIN_ASSETS="${YOIN_ASSETS:-$HERE/assets}"
+export PYTHONPATH="$HERE/payload${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+SITE="$HERE/python/lib/python3.12/site-packages/PySide6/Qt"
+if [ -d "$SITE/plugins" ]; then
+    export QT_PLUGIN_PATH="$SITE/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+fi
+if [ -d "$SITE/lib" ]; then
+    export LD_LIBRARY_PATH="$SITE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+exec "$HERE/python/bin/python3" -m yoin "$@"

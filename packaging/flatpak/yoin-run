@@ -1,0 +1,16 @@
+#!/bin/sh
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+set -eu
+export YOIN_ASSETS="${YOIN_ASSETS:-/app/share/yoin/assets}"
+export PYTHONPATH="/app/share/yoin${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONNOUSERSITE=1
+export PYTHONDONTWRITEBYTECODE=1
+SITE="/app/python/lib/python3.12/site-packages/PySide6/Qt"
+if [ -d "$SITE/plugins" ]; then
+    export QT_PLUGIN_PATH="$SITE/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+fi
+if [ -d "$SITE/lib" ]; then
+    export LD_LIBRARY_PATH="$SITE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+exec /app/python/bin/python3 -m yoin "$@"

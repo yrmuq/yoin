@@ -1,0 +1,27 @@
+yoin
+Copyright (C) 2026 yrmuq
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+The license text is the verbatim GNU GPL v3 in the file LICENSE.
+That document is not modified. This NOTICE is a separate attribution
+file. It does not change the GPL.
+
+yoin is an independent project. It is not Home Assistant, it is not
+the Home Assistant Companion app, and it is not part of the Open Home
+Foundation. Those names are used only to say what yoin talks to.
+Do not use the Home Assistant logo as the logo of yoin.
+
+An AppImage built by packaging/appimage/build.sh bundles CPython from
+the python-build-standalone release named in that script, and
+PySide6_Essentials. PySide6 loads Qt. Qt is available under the
+GNU Lesser General Public License version 3. The corresponding source
+is the Qt and PySide6 source for the version pip installed. The image
+records that version in PYSIDE.txt. yoin's own code stays
+GPL-3.0-or-later.
+
+Dependencies added later must be listed in this file, with their
+copyright and license, before a release.

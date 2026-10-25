@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=yoin
+GenericName=Home Assistant tray
+Comment=KDE tray buttons for Home Assistant
+Exec=yoin
+Icon=io.github.yrmuq.yoin
+Categories=Utility;Qt;
+Terminal=false
+StartupNotify=false
+StartupWMClass=yoin

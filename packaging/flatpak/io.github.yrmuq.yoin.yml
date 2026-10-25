@@ -1,0 +1,36 @@
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Not published. Flatpak waits until 1.0. The pre-release build is the AppImage.
+id: io.github.yrmuq.yoin
+runtime: org.kde.Platform
+runtime-version: "6.8"
+sdk: org.kde.Sdk
+command: yoin
+finish-args:
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  - --own-name=org.kde.StatusNotifierItem-*
+  - --filesystem=xdg-config/autostart:create
+modules:
+  - name: yoin
+    buildsystem: simple
+    build-commands:
+      - tar -xzf cpython.tar.gz
+      - mv python /app/python
+      - /app/python/bin/python3 -m pip install --no-warn-script-location -r requirements.txt
+      - mkdir -p /app/share/yoin
+      - cp -a yoin /app/share/yoin/yoin
+      - cp -a assets /app/share/yoin/assets
+      - install -Dm644 assets/icon.png /app/share/icons/hicolor/256x256/apps/io.github.yrmuq.yoin.png
+      - install -Dm644 packaging/flatpak/io.github.yrmuq.yoin.desktop /app/share/applications/io.github.yrmuq.yoin.desktop
+      - install -Dm755 packaging/flatpak/yoin-run /app/bin/yoin
+    sources:
+      - type: archive
+        dest-filename: cpython.tar.gz
+        url: https://github.com/astral-sh/python-build-standalone/releases/download/20261013/cpython-3.12.15+20261013-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+        sha256: 178d3d83b6e8e99285a65d3fce9c16b87952cc5efdb4d1a0e3ff3be18ff0fc9c
+      - type: dir
+        path: ../..
