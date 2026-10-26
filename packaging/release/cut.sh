@@ -59,7 +59,9 @@ else
 fi
 
 python3 packaging/release/version.py write "$new" yoin/__init__.py
-if [ "$KIND" = "minor" ]; then
+if [ -n "${NOTES:-}" ]; then
+    notes="$NOTES"
+elif [ "$KIND" = "minor" ]; then
     notes='**Changes:**
 Manual release.'
 else

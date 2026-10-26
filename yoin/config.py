@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 AUTOSTART_NAME = "io.github.yrmuq.yoin.desktop"
+MAX_BUTTONS = 10
 
 
 def config_dir() -> Path:
@@ -39,7 +40,7 @@ def defaults() -> dict:
         "device_name": "",
         "device_id": "",
         "webhook_id": "",
-        "buttons": ["", ""],
+        "buttons": [""],
         "autostart": False,
     }
 
@@ -47,10 +48,8 @@ def defaults() -> dict:
 def _buttons(value) -> list[str]:
     if not isinstance(value, list):
         value = []
-    out = [item if isinstance(item, str) else "" for item in value[:2]]
-    while len(out) < 2:
-        out.append("")
-    return out
+    out = [item if isinstance(item, str) else "" for item in value[:MAX_BUTTONS]]
+    return out or [""]
 
 
 def normalize(data: dict) -> dict:

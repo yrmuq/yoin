@@ -98,8 +98,8 @@ class HaClient(QObject):
         self._close_reply()
         self._ws.abort()
 
-    def run(self, entity_id: str) -> None:
-        action = action_for(entity_id)
+    def run(self, entity_id: str, state: str = "") -> None:
+        action = action_for(entity_id, state)
         if action is None or self._push_id is None:
             self.failed.emit("Not connected")
             self.service_done.emit(entity_id, False)

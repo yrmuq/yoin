@@ -183,7 +183,8 @@ class Controller:
         if entity in self._busy:
             return
         self._busy.add(entity)
-        self.client.run(entity)
+        known = self.known.get(entity) or {}
+        self.client.run(entity, str(known.get("state") or ""))
 
     def _service_done(self, entity: str, _ok: bool) -> None:
         self._busy.discard(entity)
