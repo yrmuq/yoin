@@ -1,6 +1,7 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
 
+import os
 import unittest
 
 from yoin.notify import notification_arguments
@@ -35,18 +36,22 @@ class NotifyTests(unittest.TestCase):
     def test_arguments_carry_the_icon_and_are_not_transient(self):
         args = notification_arguments("Door", "open", "/tmp/yoin/assets/icon.png", 8000)
         self.assertEqual(args[0], "yoin")
-        self.assertEqual(args[2], "/tmp/yoin/assets/icon.png")
+        self.assertEqual(args[2], os.path.expanduser("~/.cache/yoin/notify.png"))
         self.assertEqual(args[3], "Door")
         self.assertEqual(args[4], "open")
-        self.assertEqual(args[6]["desktop-entry"], "io.github.yrmuq.yoin")
-        self.assertTrue(args[6]["image-path"].startswith("file:"))
+        self.assertEqual(args[6], {})
         self.assertNotIn("transient", args[6])
         self.assertEqual(args[7], 8000)
+        self.assertTrue(os.path.isfile(args[2]))
 
     def test_missing_icon_is_empty(self):
         args = notification_arguments("yoin", "hi", "/tmp/yoin/assets/missing.png")
         self.assertEqual(args[2], "")
-        self.assertEqual(args[6]["image-path"], "")
+
+    def test_announce_does_not_raise_without_a_notification_daemon(self):
+        from yoin.notify import announce
+
+        self.assertIs(announce("yoin", "hi", "/tmp/yoin/assets/icon.png"), False)
 
 
 if __name__ == "__main__":
