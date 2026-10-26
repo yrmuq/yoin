@@ -1,7 +1,8 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# An annotated tag vX.Y.Z builds the AppImage and publishes
-# "yoin X.Y.Z alpha". The tag message is the release body.
+# An annotated tag vX.Y.Z builds the AppImage and publishes it.
+# Z = 0 is a normal release. Any other Z is a prerelease.
+# The tag message is the release body.
 # Use only the sections that apply, in this order:
 #   **Features:**
 #   **Fixes:**
@@ -39,7 +40,7 @@ jobs:
       - name: Build
         run: bash packaging/appimage/build.sh
 
-      - name: Publish alpha release
+      - name: Publish release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -53,13 +54,13 @@ jobs:
               ;;
           esac
           VER="${TAG#v}"
-          VER="${VER%-alpha}"
+          if ! printf '%s\n' "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "tag ${TAG} is not a version" >&2
+            exit 1
+          fi
           case "$VER" in
-            [0-9]*.[0-9]*.[0-9]*) ;;
-            *)
-              echo "tag ${TAG} is not a version"
-              exit 1
-              ;;
+            *.*.0) EXTRA=() ;;
+            *) EXTRA=(--prerelease) ;;
           esac
           git fetch origin "+refs/tags/${TAG}:refs/tags/${TAG}"
           git tag -l --format='%(contents)' "$TAG" > notes.md
@@ -77,13 +78,13 @@ jobs:
               --clobber
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --prerelease \
-              --title "yoin ${VER} alpha" \
+              "${EXTRA[@]}" \
+              --title "yoin ${VER}" \
               --notes-file notes.md
           else
             gh release create "$TAG" dist/yoin-x86_64.AppImage \
               --repo "$GITHUB_REPOSITORY" \
-              --prerelease \
-              --title "yoin ${VER} alpha" \
+              "${EXTRA[@]}" \
+              --title "yoin ${VER}" \
               --notes-file notes.md
           fi

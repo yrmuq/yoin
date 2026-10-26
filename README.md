@@ -14,7 +14,7 @@
 ---
 
 > [!NOTE]
-> **Active Alpha Development:** `yoin` is currently in active alpha development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yoin/releases) page.
+> **Releases:** `X.Y.0` is a manual release. Later patch numbers are automatic dependency prereleases, and the patch resets when the minor number changes. Images are on the [Releases](https://github.com/yrmuq/yoin/releases) page.
 >
 > **Independent Project:** `yoin` is an independent project and is not affiliated with or endorsed by Home Assistant or the Open Home Foundation.
 
