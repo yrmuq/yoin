@@ -27,6 +27,7 @@ from yoin import __version__
 from yoin.config import MAX_BUTTONS
 from yoin.ha import button_label, button_on
 from yoin.i18n import languages, tr
+from yoin.place import popup_origin
 from yoin.theme import colors, dialog_stylesheet, popup_stylesheet
 
 
@@ -326,6 +327,7 @@ class Popup(QWidget):
             | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedWidth(280)
         self.buttons: list[QPushButton] = []
         self._bound: list[bool] = []
@@ -399,40 +401,20 @@ class Popup(QWidget):
 
             screen = QApplication.primaryScreen()
         area = screen.availableGeometry()
-        full = screen.geometry()
         width, height = self.width(), self.height()
         pos = QCursor.pos()
-        tray_on_panel = (
-            tray_geo.isValid()
-            and tray_geo.width() > 1
-            and tray_geo.height() > 1
-            and not area.contains(tray_geo.center())
+        tray = (
+            int(tray_geo.x()),
+            int(tray_geo.y()),
+            int(tray_geo.width()),
+            int(tray_geo.height()),
         )
-        cursor_on_panel = (
-            pos.y() >= area.bottom() - 2
-            or pos.y() <= area.top() + 2
-            or pos.x() <= area.left() + 2
-            or pos.x() >= area.right() - 2
+        x, y = popup_origin(
+            tray,
+            (int(pos.x()), int(pos.y())),
+            (int(area.x()), int(area.y()), int(area.width()), int(area.height())),
+            (width, height),
         )
-        if tray_on_panel:
-            x = tray_geo.center().x() - width // 2
-            y = tray_geo.top() - height - 8
-            if y < area.top():
-                y = tray_geo.bottom() + 8
-        elif cursor_on_panel:
-            x = pos.x() - width // 2
-            y = area.top() + 8 if pos.y() <= area.top() else area.bottom() - height - 8
-        elif full.top() < area.top() - 4:
-            x = area.right() - width - 8
-            y = area.top() + 8
-        elif full.left() < area.left() - 4:
-            x = area.left() + 8
-            y = area.bottom() - height - 8
-        else:
-            x = area.right() - width - 8
-            y = area.bottom() - height - 8
-        x = max(area.left(), min(x, area.right() - width))
-        y = max(area.top(), min(y, area.bottom() - height))
         self.move(x, y)
         return x, y
 

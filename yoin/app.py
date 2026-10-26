@@ -20,6 +20,7 @@ from yoin.config import (
     config_dir,
 )
 from yoin.i18n import match_language, tr, trf, use
+from yoin.notify import announce
 from yoin.place import move_kwin
 from yoin.theme import dialog_stylesheet, prefers_dark, resolved_theme
 from yoin.ui import Popup, Settings, asset_path, labels_for, ons_for
@@ -161,29 +162,22 @@ class Controller:
         x, y = self.popup.place(geo)
         self.popup.show()
         self.popup.raise_()
-        self.popup.activateWindow()
         handle = self.popup.windowHandle()
         if handle is not None:
             handle.setTransientParent(None)
         if QGuiApplication.platformName() == "wayland":
             width, height = self.popup.width(), self.popup.height()
-            QTimer.singleShot(0, lambda: self._kick(x, y, width, height, False))
-            QTimer.singleShot(80, lambda: self._kick(x, y, width, height, True))
+            QTimer.singleShot(0, lambda: self._kick(x, y, width, height))
 
-    def _kick(self, x: int, y: int, width: int, height: int, warn: bool) -> None:
+    def _kick(self, x: int, y: int, width: int, height: int) -> None:
         if not self.popup.isVisible():
             return
         if move_kwin(self.popup.windowTitle(), x, y, width, height):
             return
-        if not warn or self._place_warned:
+        if self._place_warned:
             return
         self._place_warned = True
-        self.tray.showMessage(
-            "yoin",
-            tr(23),
-            QSystemTrayIcon.MessageIcon.Warning,
-            8000,
-        )
+        self._announce("yoin", tr(23))
 
     def _close_popup(self) -> None:
         self.popup.dismiss()
@@ -219,6 +213,12 @@ class Controller:
         self.settings.set_status(tr(22))
 
     def _notify(self, title: str, message: str) -> None:
+        self._announce(title, message)
+
+    def _announce(self, title: str, message: str) -> None:
+        icon = os.path.abspath(asset_path("icon.png"))
+        if announce(title, message, icon):
+            return
         self.tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 8000)
 
     def _entities(self, entities: list) -> None:
@@ -246,7 +246,7 @@ class Controller:
         if text == self._last_error:
             return
         self._last_error = text
-        self.tray.showMessage("yoin", text, QSystemTrayIcon.MessageIcon.Warning, 8000)
+        self._announce("yoin", text)
 
     def _refresh_popup(self) -> None:
         buttons = self.cfg["buttons"]
