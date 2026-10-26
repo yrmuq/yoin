@@ -18,7 +18,6 @@ from PySide6.QtNetwork import (
     QNetworkReply,
     QNetworkRequest,
 )
-from PySide6.QtWebSockets import QWebSocket
 
 from yoin import __version__
 from yoin.ha import (
@@ -31,6 +30,7 @@ from yoin.ha import (
     state_event,
     ws_url,
 )
+from yoin.ws import WsClient
 
 
 class HaClient(QObject):
@@ -57,7 +57,7 @@ class HaClient(QObject):
         self._state_id: int | None = None
         self._pending: dict[int, str] = {}
         self._services: dict[int, str] = {}
-        self._ws = QWebSocket()
+        self._ws = WsClient(self)
         self._nam = QNetworkAccessManager(self)
         self._reply: QNetworkReply | None = None
         self._retry = QTimer(self)
