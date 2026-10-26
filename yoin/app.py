@@ -122,21 +122,37 @@ class Controller:
     def _activated(self, reason) -> None:
         if reason != QSystemTrayIcon.ActivationReason.Trigger:
             return
-        geo = self.tray.geometry()
-        if self.popup.isVisible():
-            self.popup.hide()
+        QTimer.singleShot(0, self._toggle_popup)
+
+    def _toggle_popup(self) -> None:
+        mapped = self.popup.is_mapped()
+        self._close_popup()
+        if mapped:
             return
         self._refresh_popup()
-        # The click that opened the menu would also close a popup.
+        geo = self.tray.geometry()
+        # The click that opened this also lands on a Popup and closes it.
         QTimer.singleShot(80, lambda: self._show_popup(geo))
 
     def _show_popup(self, geo) -> None:
+        if self.popup.is_mapped():
+            return
         self.popup.place(geo)
         self.popup.show()
+        self.popup.raise_()
+
+    def _close_popup(self) -> None:
+        self.popup.dismiss()
+        QTimer.singleShot(0, self.popup.drop_window)
 
     def _pressed(self, index: int) -> None:
-        entity = self.cfg["buttons"][index]
-        self.popup.hide()
+        buttons = self.cfg["buttons"]
+        entity = buttons[index] if index < len(buttons) else ""
+        # Hide after the mouse release. Hiding a Popup inside the click keeps the grab.
+        QTimer.singleShot(0, lambda: self._finish_press(entity))
+
+    def _finish_press(self, entity: str) -> None:
+        self._close_popup()
         if not entity:
             self.open_settings()
             return

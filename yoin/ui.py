@@ -162,6 +162,23 @@ class Popup(QWidget):
         for button, label in zip(self.buttons, labels):
             button.setText(label)
 
+    def is_mapped(self) -> bool:
+        window = self.windowHandle()
+        return self.isVisible() and window is not None and window.isVisible()
+
+    def dismiss(self) -> None:
+        self.hide()
+        window = self.windowHandle()
+        if window is not None:
+            window.setMouseGrabEnabled(False)
+            window.setKeyboardGrabEnabled(False)
+
+    def drop_window(self) -> None:
+        if self.isVisible():
+            return
+        self.dismiss()
+        self.destroy()
+
     def place(self, tray_geo) -> None:
         self.adjustSize()
         screen = self.screen()
