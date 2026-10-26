@@ -37,8 +37,21 @@ class HaTests(unittest.TestCase):
 
     def test_actions(self):
         self.assertEqual(action_for("switch.porch"), ("switch", "toggle"))
+        self.assertEqual(action_for("light.kitchen"), ("light", "toggle"))
         self.assertEqual(action_for("script.night"), ("script", "turn_on"))
-        self.assertIsNone(action_for("light.kitchen"))
+        self.assertEqual(action_for("lock.door", "locked"), ("lock", "unlock"))
+        self.assertEqual(action_for("lock.door", "unlocked"), ("lock", "lock"))
+        self.assertEqual(
+            action_for("alarm_control_panel.home", "armed_away"),
+            ("alarm_control_panel", "alarm_disarm"),
+        )
+        self.assertEqual(
+            action_for("alarm_control_panel.home", "disarmed"),
+            ("alarm_control_panel", "alarm_arm_away"),
+        )
+        self.assertEqual(action_for("climate.hall", "heat"), ("climate", "turn_off"))
+        self.assertEqual(action_for("water_heater.bath", "off"), ("water_heater", "turn_on"))
+        self.assertIsNone(action_for("sensor.temp"))
         self.assertIsNone(action_for(""))
 
     def test_notification(self):
@@ -50,18 +63,31 @@ class HaTests(unittest.TestCase):
         self.assertEqual(confirm_id({"hass_confirm_id": "abc"}), "abc")
         self.assertIsNone(confirm_id({"hass_confirm_id": ""}))
 
-    def test_entities_ignore_other_domains(self):
+    def test_entities_keep_toggleable(self):
         states = [
             {"entity_id": "light.a", "state": "on", "attributes": {"friendly_name": "A"}},
             {"entity_id": "switch.b", "state": "off", "attributes": {"friendly_name": "Porch"}},
             {"entity_id": "script.a", "state": "off", "attributes": {}},
+            {"entity_id": "sensor.temp", "state": "20", "attributes": {"friendly_name": "Temp"}},
+            {
+                "entity_id": "alarm_control_panel.home",
+                "state": "disarmed",
+                "attributes": {"friendly_name": "Home"},
+            },
         ]
         found = entities_from_states(states)
-        self.assertEqual([item["entity_id"] for item in found], ["switch.b", "script.a"])
-        self.assertEqual(button_label("switch.b", found[0]), "Porch: off")
-        self.assertEqual(button_label("script.a", found[1]), "script.a: off")
-        self.assertFalse(button_on(found[0]))
+        self.assertEqual(
+            [item["entity_id"] for item in found],
+            ["light.a", "alarm_control_panel.home", "switch.b", "script.a"],
+        )
+        porch = next(item for item in found if item["entity_id"] == "switch.b")
+        script = next(item for item in found if item["entity_id"] == "script.a")
+        self.assertEqual(button_label("switch.b", porch), "Porch: off")
+        self.assertEqual(button_label("script.a", script), "script.a: off")
+        self.assertFalse(button_on(porch))
         self.assertTrue(button_on({"state": "on"}))
+        self.assertTrue(button_on({"state": "armed_away"}))
+        self.assertFalse(button_on({"state": "disarmed"}))
         self.assertEqual(button_label("", None), "Not set")
 
     def test_state_event(self):
@@ -105,6 +131,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(loaded["token"], "secret")
         self.assertEqual(loaded["buttons"], ["switch.b", ""])
         self.assertTrue(loaded["autostart"])
+        save_config({"buttons": [f"switch.{i}" for i in range(12)]}, path)
+        self.assertEqual(len(load_config(path)["buttons"]), 10)
+        save_config({"buttons": []}, path)
+        self.assertEqual(load_config(path)["buttons"], [""])
         path.write_text("{", encoding="utf-8")
         self.assertEqual(load_config(path)["token"], "")
         self.assertTrue((root / "config.json.bak").is_file())

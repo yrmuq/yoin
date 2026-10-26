@@ -7,7 +7,7 @@
   [![Latest Release](https://img.shields.io/github/v/release/yrmuq/yoin?include_prereleases)](https://github.com/yrmuq/yoin/releases)
 
   <p>
-    A native KDE tray program for Home Assistant. It keeps a websocket open, shows two buttons for a switch or a script, and delivers notifications through the <code>mobile_app</code> local push channel. No browser engine and no HTML5 push.
+    A native KDE tray program for Home Assistant. It keeps a websocket open, shows up to ten buttons, and delivers notifications through the <code>mobile_app</code> local push channel. No browser engine and no HTML5 push.
   </p>
 </div>
 
@@ -23,7 +23,7 @@
 ## Features
 
 * **KDE tray:** A StatusNotifier icon. The first launch opens settings. After Home Assistant accepts the token, a left click opens a small rounded window just above the panel, next to the tray. A button click leaves that window open. Each button shows the entity's `on` or `off` state.
-* **Two actions:** Each button is a `switch` (toggle) or a `script` (turn on). Nothing else is listed.
+* **Buttons:** One by default, up to ten. The Buttons tab sets the order, and that order is the order in the tray window. A button toggles a light, switch, cover, fan, lock, alarm, climate, or anything else Home Assistant can turn between two states. A script is started.
 * **Notifications:** `yoin` registers its own `mobile_app` device and subscribes to `mobile_app/push_notification_channel`. Home Assistant delivers `notify.mobile_app_<device>` over the websocket. The desktop notification center shows it. There is no HTML5 registration and no cloud push: if `yoin` is not running, the notification is missed.
 * **Session start:** Settings can write an XDG autostart entry that waits until the Plasma panel is up.
 * **Persistent configuration:** The address, token, device id, and button choices are stored in `~/.config/yoin/config.json` (`0600`).
@@ -36,7 +36,7 @@
 | :--- | :--- |
 | Left click (tray) | Open or close the button window. |
 | Right click (tray) | Settings and Quit. |
-| Button | Run the bound switch or script. The window stays open, and the label follows the Home Assistant state. An empty button opens Settings. |
+| Button | Run the bound entity. The window stays open, and the label follows the Home Assistant state. An empty button opens Settings. |
 
 Send a notification from Home Assistant with the device name chosen in Settings. A device named `Fedora` is `notify.mobile_app_fedora`.
 

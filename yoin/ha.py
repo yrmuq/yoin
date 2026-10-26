@@ -39,14 +39,43 @@ def registration_body(
     }
 
 
-def action_for(entity_id: str) -> tuple[str, str] | None:
+TOGGLE_DOMAINS = frozenset(
+    {
+        "automation",
+        "cover",
+        "fan",
+        "group",
+        "humidifier",
+        "input_boolean",
+        "light",
+        "media_player",
+        "remote",
+        "siren",
+        "switch",
+        "valve",
+    }
+)
+POWER_DOMAINS = frozenset({"climate", "water_heater"})
+QUIET_STATES = frozenset(
+    {"", "off", "unknown", "unavailable", "disarmed", "unlocked", "closed", "standby"}
+)
+
+
+def action_for(entity_id: str, state: str = "") -> tuple[str, str] | None:
     if not entity_id or "." not in entity_id:
         return None
     domain = entity_id.split(".", 1)[0]
-    if domain == "switch":
-        return ("switch", "toggle")
+    if domain in TOGGLE_DOMAINS:
+        return (domain, "toggle")
     if domain == "script":
         return ("script", "turn_on")
+    if domain == "lock":
+        return ("lock", "unlock" if state == "locked" else "lock")
+    if domain == "alarm_control_panel":
+        armed = state.startswith("armed") or state in ("arming", "pending", "triggered")
+        return ("alarm_control_panel", "alarm_disarm" if armed else "alarm_arm_away")
+    if domain in POWER_DOMAINS:
+        return (domain, "turn_on" if state == "off" else "turn_off")
     return None
 
 
@@ -85,20 +114,21 @@ def entities_from_states(states) -> list[dict]:
         eid = st.get("entity_id")
         if not isinstance(eid, str) or "." not in eid:
             continue
-        domain = eid.split(".", 1)[0]
-        if domain not in ("script", "switch"):
+        raw_state = st.get("state")
+        state = raw_state if isinstance(raw_state, str) else ""
+        if action_for(eid, state) is None:
             continue
+        domain = eid.split(".", 1)[0]
         attrs = st.get("attributes") if isinstance(st.get("attributes"), dict) else {}
         name = attrs.get("friendly_name")
         if not isinstance(name, str) or not name.strip():
             name = eid
-        state = st.get("state")
         out.append(
             {
                 "entity_id": eid,
                 "name": name,
                 "domain": domain,
-                "state": state if isinstance(state, str) else "",
+                "state": state,
             }
         )
     out.sort(key=lambda e: (e["name"].casefold(), e["entity_id"]))
@@ -128,4 +158,7 @@ def button_label(entity_id: str, known: dict | None) -> str:
 
 
 def button_on(known: dict | None) -> bool:
-    return isinstance(known, dict) and known.get("state") == "on"
+    if not isinstance(known, dict):
+        return False
+    state = known.get("state")
+    return isinstance(state, str) and state not in QUIET_STATES
