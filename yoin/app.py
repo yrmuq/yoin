@@ -3,12 +3,11 @@
 
 from __future__ import annotations
 
-import os
 import sys
 import uuid
 
 from PySide6.QtCore import QLockFile, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QGuiApplication, QIcon
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from yoin.client import HaClient
@@ -19,6 +18,7 @@ from yoin.config import (
     save_config,
     config_dir,
 )
+from yoin.place import move_kwin
 from yoin.ui import Popup, Settings, asset_path, labels_for, ons_for
 
 
@@ -28,6 +28,7 @@ class Controller:
         self.known: dict[str, dict] = {}
         self._last_error = ""
         self._busy: set[str] = set()
+        self._place_warned = False
         self.client = HaClient()
         self.settings = Settings()
         self.popup = Popup()
@@ -138,14 +139,32 @@ class Controller:
         if self.popup.is_mapped():
             return
         self.popup.setParent(None)
-        self.popup.place(geo)
+        x, y = self.popup.place(geo)
         self.popup.show()
         self.popup.raise_()
         self.popup.activateWindow()
         handle = self.popup.windowHandle()
         if handle is not None:
             handle.setTransientParent(None)
-        self.popup.place(geo)
+        if QGuiApplication.platformName() == "wayland":
+            width, height = self.popup.width(), self.popup.height()
+            QTimer.singleShot(0, lambda: self._kick(x, y, width, height, False))
+            QTimer.singleShot(80, lambda: self._kick(x, y, width, height, True))
+
+    def _kick(self, x: int, y: int, width: int, height: int, warn: bool) -> None:
+        if not self.popup.isVisible():
+            return
+        if move_kwin(self.popup.windowTitle(), x, y, width, height):
+            return
+        if not warn or self._place_warned:
+            return
+        self._place_warned = True
+        self.tray.showMessage(
+            "yoin",
+            "KWin did not place the button window",
+            QSystemTrayIcon.MessageIcon.Warning,
+            8000,
+        )
 
     def _close_popup(self) -> None:
         self.popup.dismiss()
@@ -154,7 +173,6 @@ class Controller:
     def _pressed(self, index: int) -> None:
         buttons = self.cfg["buttons"]
         entity = buttons[index] if index < len(buttons) else ""
-        # Hide after the mouse release. Hiding a Popup inside the click keeps the grab.
         QTimer.singleShot(0, lambda: self._finish_press(entity))
 
     def _finish_press(self, entity: str) -> None:
@@ -216,13 +234,6 @@ class Controller:
 
 
 def main() -> int:
-    # A Wayland toplevel cannot be placed above the panel. XWayland can.
-    if (
-        not os.environ.get("QT_QPA_PLATFORM")
-        and os.environ.get("WAYLAND_DISPLAY")
-        and os.environ.get("DISPLAY")
-    ):
-        os.environ["QT_QPA_PLATFORM"] = "xcb"
     app = QApplication(sys.argv)
     app.setApplicationName("yoin")
     app.setOrganizationName("yoin")

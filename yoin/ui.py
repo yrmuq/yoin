@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from yoin import __version__
 from yoin.ha import button_label, button_on
 
 
@@ -85,6 +86,9 @@ class Settings(QDialog):
         lay.addLayout(form)
         lay.addWidget(self.status)
         lay.addLayout(buttons)
+        version = QLabel(__version__)
+        version.setAlignment(Qt.AlignmentFlag.AlignRight)
+        lay.addWidget(version)
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
@@ -142,11 +146,11 @@ class Popup(QWidget):
 
     def __init__(self) -> None:
         super().__init__(None)
+        self.setWindowTitle("yoin-buttons")
         self.setWindowFlags(
             Qt.WindowType.Tool
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.BypassWindowManagerHint
             | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -194,7 +198,7 @@ class Popup(QWidget):
         self.dismiss()
         self.destroy()
 
-    def place(self, tray_geo) -> None:
+    def place(self, tray_geo) -> tuple[int, int]:
         self.adjustSize()
         screen = self.screen()
         if screen is None:
@@ -202,28 +206,42 @@ class Popup(QWidget):
 
             screen = QApplication.primaryScreen()
         area = screen.availableGeometry()
+        full = screen.geometry()
         width, height = self.width(), self.height()
         pos = QCursor.pos()
-        on_panel = (
+        tray_on_panel = (
             tray_geo.isValid()
             and tray_geo.width() > 1
             and tray_geo.height() > 1
             and not area.contains(tray_geo.center())
         )
-        if on_panel:
+        cursor_on_panel = (
+            pos.y() >= area.bottom() - 2
+            or pos.y() <= area.top() + 2
+            or pos.x() <= area.left() + 2
+            or pos.x() >= area.right() - 2
+        )
+        if tray_on_panel:
             x = tray_geo.center().x() - width // 2
             y = tray_geo.top() - height - 8
             if y < area.top():
                 y = tray_geo.bottom() + 8
-        else:
+        elif cursor_on_panel:
             x = pos.x() - width // 2
-            if pos.y() <= area.top():
-                y = area.top() + 8
-            else:
-                y = area.bottom() - height - 8
+            y = area.top() + 8 if pos.y() <= area.top() else area.bottom() - height - 8
+        elif full.top() < area.top() - 4:
+            x = area.right() - width - 8
+            y = area.top() + 8
+        elif full.left() < area.left() - 4:
+            x = area.left() + 8
+            y = area.bottom() - height - 8
+        else:
+            x = area.right() - width - 8
+            y = area.bottom() - height - 8
         x = max(area.left(), min(x, area.right() - width))
         y = max(area.top(), min(y, area.bottom() - height))
         self.move(x, y)
+        return x, y
 
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
