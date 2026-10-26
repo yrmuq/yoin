@@ -1,7 +1,7 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
 # An annotated tag vX.Y.Z builds the AppImage and publishes
-# "yoin X.Y.Z beta". The tag message is the release body.
+# "yoin X.Y.Z alpha". The tag message is the release body.
 # Use only the sections that apply, in this order:
 #   **Features:**
 #   **Fixes:**
@@ -39,7 +39,7 @@ jobs:
       - name: Build
         run: bash packaging/appimage/build.sh
 
-      - name: Publish beta release
+      - name: Publish alpha release
         if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -78,12 +78,12 @@ jobs:
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
               --prerelease \
-              --title "yoin ${VER} beta" \
+              --title "yoin ${VER} alpha" \
               --notes-file notes.md
           else
             gh release create "$TAG" dist/yoin-x86_64.AppImage \
               --repo "$GITHUB_REPOSITORY" \
               --prerelease \
-              --title "yoin ${VER} beta" \
+              --title "yoin ${VER} alpha" \
               --notes-file notes.md
           fi

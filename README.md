@@ -14,7 +14,7 @@
 ---
 
 > [!NOTE]
-> **Active Beta Development:** `yoin` is currently in active beta development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yoin/releases) page.
+> **Active Alpha Development:** `yoin` is currently in active alpha development. Pre-release `x86_64` `AppImage` builds are available on the [Releases](https://github.com/yrmuq/yoin/releases) page.
 >
 > **Independent Project:** `yoin` is an independent project and is not affiliated with or endorsed by Home Assistant or the Open Home Foundation.
 
@@ -22,7 +22,7 @@
 
 ## Features
 
-* **KDE tray:** A StatusNotifier icon. The first launch opens settings. After Home Assistant accepts the token, a left click opens a small rounded window just above the tray.
+* **KDE tray:** A StatusNotifier icon. The first launch opens settings. After Home Assistant accepts the token, a left click opens a small rounded window just above the panel, next to the tray. A button click leaves that window open. Each button shows the entity's `on` or `off` state.
 * **Two actions:** Each button is a `switch` (toggle) or a `script` (turn on). Nothing else is listed.
 * **Notifications:** `yoin` registers its own `mobile_app` device and subscribes to `mobile_app/push_notification_channel`. Home Assistant delivers `notify.mobile_app_<device>` over the websocket. The desktop notification center shows it. There is no HTML5 registration and no cloud push: if `yoin` is not running, the notification is missed.
 * **Session start:** Settings can write an XDG autostart entry that waits until the Plasma panel is up.
@@ -36,7 +36,7 @@
 | :--- | :--- |
 | Left click (tray) | Open or close the button window. |
 | Right click (tray) | Settings and Quit. |
-| Button | Run the bound switch or script. An empty button opens Settings. |
+| Button | Run the bound switch or script. The window stays open, and the label follows the Home Assistant state. An empty button opens Settings. |
 
 Send a notification from Home Assistant with the device name chosen in Settings. A device named `Fedora` is `notify.mobile_app_fedora`.
 

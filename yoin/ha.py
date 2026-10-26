@@ -121,6 +121,11 @@ def button_label(entity_id: str, known: dict | None) -> str:
     if not known:
         return entity_id
     name = str(known.get("name") or entity_id)
-    if known.get("domain") == "switch" and known.get("state"):
-        return f"{name}: {known['state']}"
+    state = known.get("state")
+    if isinstance(state, str) and state:
+        return f"{name}: {state}"
     return name
+
+
+def button_on(known: dict | None) -> bool:
+    return isinstance(known, dict) and known.get("state") == "on"

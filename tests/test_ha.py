@@ -9,6 +9,7 @@ from yoin.ha import (
     APP_ID,
     action_for,
     button_label,
+    button_on,
     confirm_id,
     entities_from_states,
     notification_text,
@@ -58,6 +59,9 @@ class HaTests(unittest.TestCase):
         found = entities_from_states(states)
         self.assertEqual([item["entity_id"] for item in found], ["switch.b", "script.a"])
         self.assertEqual(button_label("switch.b", found[0]), "Porch: off")
+        self.assertEqual(button_label("script.a", found[1]), "script.a: off")
+        self.assertFalse(button_on(found[0]))
+        self.assertTrue(button_on({"state": "on"}))
         self.assertEqual(button_label("", None), "Not set")
 
     def test_state_event(self):

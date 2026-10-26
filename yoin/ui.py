@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QCursor, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from yoin.ha import button_label
+from yoin.ha import button_label, button_on
 
 
 def asset_path(name: str) -> str:
@@ -143,8 +143,10 @@ class Popup(QWidget):
     def __init__(self) -> None:
         super().__init__(None)
         self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.Popup
+            Qt.WindowType.Tool
+            | Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.WindowStaysOnTopHint
+            | Qt.WindowType.BypassWindowManagerHint
             | Qt.WindowType.NoDropShadowWindowHint
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -158,9 +160,22 @@ class Popup(QWidget):
             button.clicked.connect(lambda _checked=False, i=index: self.triggered.emit(i))
             lay.addWidget(button)
 
-    def set_labels(self, labels: list[str]) -> None:
-        for button, label in zip(self.buttons, labels):
+    def set_faces(self, labels: list[str], ons: list[bool]) -> None:
+        for button, label, on in zip(self.buttons, labels, ons):
             button.setText(label)
+            button.setCheckable(label != "Not set")
+            button.setChecked(bool(on))
+
+    def eventFilter(self, watched, event) -> bool:
+        if (
+            self.isVisible()
+            and event.type() == QEvent.Type.MouseButtonPress
+            and hasattr(event, "globalPosition")
+        ):
+            pos = event.globalPosition().toPoint()
+            if not self.frameGeometry().contains(pos):
+                self.dismiss()
+        return super().eventFilter(watched, event)
 
     def is_mapped(self) -> bool:
         window = self.windowHandle()
@@ -188,15 +203,24 @@ class Popup(QWidget):
             screen = QApplication.primaryScreen()
         area = screen.availableGeometry()
         width, height = self.width(), self.height()
-        if tray_geo.isValid() and tray_geo.width() > 1 and tray_geo.height() > 1:
+        pos = QCursor.pos()
+        on_panel = (
+            tray_geo.isValid()
+            and tray_geo.width() > 1
+            and tray_geo.height() > 1
+            and not area.contains(tray_geo.center())
+        )
+        if on_panel:
             x = tray_geo.center().x() - width // 2
             y = tray_geo.top() - height - 8
             if y < area.top():
                 y = tray_geo.bottom() + 8
         else:
-            pos = QCursor.pos()
             x = pos.x() - width // 2
-            y = pos.y() - height - 12
+            if pos.y() <= area.top():
+                y = area.top() + 8
+            else:
+                y = area.bottom() - height - 8
         x = max(area.left(), min(x, area.right() - width))
         y = max(area.top(), min(y, area.bottom() - height))
         self.move(x, y)
@@ -213,3 +237,7 @@ class Popup(QWidget):
 
 def labels_for(buttons: list[str], known: dict[str, dict]) -> list[str]:
     return [button_label(entity_id, known.get(entity_id)) for entity_id in buttons]
+
+
+def ons_for(buttons: list[str], known: dict[str, dict]) -> list[bool]:
+    return [button_on(known.get(entity_id)) for entity_id in buttons]

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 
@@ -18,7 +19,7 @@ from yoin.config import (
     save_config,
     config_dir,
 )
-from yoin.ui import Popup, Settings, asset_path, labels_for
+from yoin.ui import Popup, Settings, asset_path, labels_for, ons_for
 
 
 class Controller:
@@ -39,6 +40,7 @@ class Controller:
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._activated)
         self.popup.triggered.connect(self._pressed)
+        QApplication.instance().installEventFilter(self.popup)
         self.settings.connect_requested.connect(self._connect)
         self.settings.save_requested.connect(self._save)
         self.client.link.connect(self._link)
@@ -130,16 +132,20 @@ class Controller:
         if mapped:
             return
         self._refresh_popup()
-        geo = self.tray.geometry()
-        # The click that opened this also lands on a Popup and closes it.
-        QTimer.singleShot(80, lambda: self._show_popup(geo))
+        self._show_popup(self.tray.geometry())
 
     def _show_popup(self, geo) -> None:
         if self.popup.is_mapped():
             return
+        self.popup.setParent(None)
         self.popup.place(geo)
         self.popup.show()
         self.popup.raise_()
+        self.popup.activateWindow()
+        handle = self.popup.windowHandle()
+        if handle is not None:
+            handle.setTransientParent(None)
+        self.popup.place(geo)
 
     def _close_popup(self) -> None:
         self.popup.dismiss()
@@ -152,7 +158,7 @@ class Controller:
         QTimer.singleShot(0, lambda: self._finish_press(entity))
 
     def _finish_press(self, entity: str) -> None:
-        self._close_popup()
+        self._refresh_popup()
         if not entity:
             self.open_settings()
             return
@@ -205,10 +211,18 @@ class Controller:
         self.tray.showMessage("yoin", text, QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     def _refresh_popup(self) -> None:
-        self.popup.set_labels(labels_for(self.cfg["buttons"], self.known))
+        buttons = self.cfg["buttons"]
+        self.popup.set_faces(labels_for(buttons, self.known), ons_for(buttons, self.known))
 
 
 def main() -> int:
+    # A Wayland toplevel cannot be placed above the panel. XWayland can.
+    if (
+        not os.environ.get("QT_QPA_PLATFORM")
+        and os.environ.get("WAYLAND_DISPLAY")
+        and os.environ.get("DISPLAY")
+    ):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
     app = QApplication(sys.argv)
     app.setApplicationName("yoin")
     app.setOrganizationName("yoin")
