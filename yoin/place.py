@@ -1,13 +1,13 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Ask KWin to place a window. Wayland clients cannot do this themselves."""
+"""KWin keeps a small script loaded and pins the button window to the panel."""
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 _seq = 0
-_current: int | None = None
 
 
 def popup_origin(tray: tuple[int, int, int, int], cursor: tuple[int, int], area: tuple[int, int, int, int], size: tuple[int, int]) -> tuple[int, int]:
@@ -61,105 +61,44 @@ def _edge(x: int, y: int, area: tuple[int, int, int, int], margin: int = 64) -> 
     return ""
 
 
-def place_script(title: str, x: int, y: int, width: int, height: int) -> str:
-    safe = title.replace("\\", "\\\\").replace('"', '\\"')
-    x, y, width, height = int(x), int(y), int(width), int(height)
-    anchor_x = x + width // 2
-    anchor_y = y + height + 8
-    return (
-        "(function () {\n"
-        "    var fallbackX = %d;\n"
-        "    var fallbackY = %d;\n"
-        "    var winW = %d;\n"
-        "    var winH = %d;\n"
-        "    var locked = null;\n"
-        "    function spot() {\n"
-        "        if (locked)\n"
-        "            return locked;\n"
-        "        var cx = fallbackX;\n"
-        "        var cy = fallbackY;\n"
-        "        if (workspace.cursorPos) {\n"
-        "            cx = workspace.cursorPos.x;\n"
-        "            cy = workspace.cursorPos.y;\n"
-        "        }\n"
-        "        locked = { x: cx, y: cy };\n"
-        "        return locked;\n"
-        "    }\n"
-        "    function yoinPlaceOnce() {\n"
-        "        var list = workspace.windowList ? workspace.windowList() : workspace.clientList();\n"
-        "        var cursor = spot();\n"
-        "        var found = false;\n"
-        "        for (var i = 0; i < list.length; ++i) {\n"
-        "            var win = list[i];\n"
-        "            if (!win || String(win.caption).indexOf(\"%s\") < 0)\n"
-        "                continue;\n"
-        "            found = true;\n"
-        "            var area = workspace.clientArea(KWin.PlacementArea, win);\n"
-        "            var x = cursor.x - Math.round(winW / 2);\n"
-        "            var y = cursor.y - winH - 12;\n"
-        "            if (cursor.y < area.y + 64)\n"
-        "                y = cursor.y + 16;\n"
-        "            x = Math.max(area.x, Math.min(x, area.x + area.width - winW));\n"
-        "            y = Math.max(area.y, Math.min(y, area.y + area.height - winH));\n"
-        "            win.frameGeometry = Qt.rect(x, y, winW, winH);\n"
-        "        }\n"
-        "        return found;\n"
-        "    }\n"
-        "    var tries = 0;\n"
-        "    function tick() {\n"
-        "        tries += 1;\n"
-        "        var found = false;\n"
-        "        try { found = yoinPlaceOnce(); } catch (e) { found = false; }\n"
-        "        if (tries > 25)\n"
-        "            yoinPlaceTimer.stop();\n"
-        "    }\n"
-        "    yoinPlaceTimer = new QTimer();\n"
-        "    yoinPlaceTimer.interval = 40;\n"
-        "    yoinPlaceTimer.timeout.connect(tick);\n"
-        "    yoinPlaceTimer.start();\n"
-        "    tick();\n"
-        "})();\n" % (anchor_x, anchor_y, width, height, safe)
-    )
+def placer_script() -> str:
+    return Path(__file__).with_name("placer.js").read_text(encoding="utf-8")
 
 
-def move_kwin(title: str, x: int, y: int, width: int, height: int) -> bool:
+def install_placer() -> bool:
+    """Load the panel placer and leave it running. A one-shot script misses the window."""
     from PySide6.QtDBus import QDBusConnection, QDBusMessage
 
-    global _current
-    if _current is not None:
-        _stop_id(_current)
-        _current = None
+    global _seq
     cache = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
     folder = os.path.join(cache, "yoin")
     os.makedirs(folder, exist_ok=True)
-    path = os.path.join(folder, "place.js")
+    id_path = os.path.join(folder, "placer.id")
+    _stop_saved(id_path)
+    path = os.path.join(folder, "placer.js")
     with open(path, "w", encoding="utf-8") as handle:
-        handle.write(place_script(title, x, y, width, height))
+        handle.write(placer_script())
     bus = QDBusConnection.sessionBus()
-    script_id = _load(bus, path)
+    _seq += 1
+    script_id = _load(bus, path, f"yoinplace{_seq}")
     if script_id is None:
         return False
     for object_path in (f"/Scripting/Script{script_id}", f"/{script_id}"):
         if _ok(bus, object_path, "run"):
-            _current = script_id
-            _stop_later(script_id)
+            with open(id_path, "w", encoding="utf-8") as handle:
+                handle.write(str(script_id))
             return True
     return False
 
 
-def _stop_later(script_id: int) -> None:
-    from PySide6.QtCore import QTimer
-    from PySide6.QtWidgets import QApplication
-
-    def finish(done: int = script_id) -> None:
-        global _current
-        if _current == done:
-            _current = None
-        _stop_id(done)
-
-    if QApplication.instance() is None:
+def _stop_saved(id_path: str) -> None:
+    if not os.path.isfile(id_path):
         return
-    QTimer.singleShot(1500, finish)
+    try:
+        script_id = int(Path(id_path).read_text(encoding="utf-8").strip())
+    except ValueError:
+        return
+    _stop_id(script_id)
 
 
 def _stop_id(script_id: int) -> None:
@@ -171,12 +110,9 @@ def _stop_id(script_id: int) -> None:
             return
 
 
-def _load(bus, path: str) -> int | None:
+def _load(bus, path: str, plugin: str) -> int | None:
     from PySide6.QtDBus import QDBusMessage
 
-    global _seq
-    _seq += 1
-    plugin = f"yoinplace{_seq}"
     for args in ([path, plugin], [path]):
         reply = _call(bus, "/Scripting", "org.kde.kwin.Scripting", "loadScript", args)
         if reply.type() == QDBusMessage.MessageType.ErrorMessage:

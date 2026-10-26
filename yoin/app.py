@@ -21,7 +21,7 @@ from yoin.config import (
 )
 from yoin.i18n import match_language, tr, trf, use
 from yoin.notify import announce
-from yoin.place import move_kwin
+from yoin.place import install_placer
 from yoin.theme import dialog_stylesheet, prefers_dark, resolved_theme
 from yoin.ui import Popup, Settings, asset_path, labels_for, ons_for
 
@@ -47,6 +47,7 @@ class Controller:
         self.tray.activated.connect(self._activated)
         self.popup.triggered.connect(self._pressed)
         QApplication.instance().installEventFilter(self.popup)
+        self._placer_ok = install_placer()
         self.settings.connect_requested.connect(self._connect)
         self.settings.save_requested.connect(self._save)
         self.settings.language_changed.connect(self._language)
@@ -159,25 +160,15 @@ class Controller:
         if self.popup.is_mapped():
             return
         self.popup.setParent(None)
-        x, y = self.popup.place(geo)
+        self.popup.place(geo)
         self.popup.show()
         self.popup.raise_()
         handle = self.popup.windowHandle()
         if handle is not None:
             handle.setTransientParent(None)
-        if QGuiApplication.platformName() == "wayland":
-            width, height = self.popup.width(), self.popup.height()
-            QTimer.singleShot(0, lambda: self._kick(x, y, width, height))
-
-    def _kick(self, x: int, y: int, width: int, height: int) -> None:
-        if not self.popup.isVisible():
-            return
-        if move_kwin(self.popup.windowTitle(), x, y, width, height):
-            return
-        if self._place_warned:
-            return
-        self._place_warned = True
-        self._announce("yoin", tr(23))
+        if QGuiApplication.platformName() == "wayland" and not self._placer_ok and not self._place_warned:
+            self._place_warned = True
+            self._announce("yoin", tr(23))
 
     def _close_popup(self) -> None:
         self.popup.dismiss()

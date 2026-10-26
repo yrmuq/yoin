@@ -4,23 +4,18 @@
 import unittest
 
 from yoin.notify import notification_arguments
-from yoin.place import place_script, popup_origin
+from yoin.place import placer_script, popup_origin
 
 
 class PlaceTests(unittest.TestCase):
-    def test_script_follows_the_cursor_and_keeps_trying(self):
-        text = place_script("yoin-buttons", 12, 34, 280, 120)
-        self.assertIn('indexOf("yoin-buttons")', text)
+    def test_script_pins_the_popup_to_the_panel(self):
+        text = placer_script()
+        self.assertIn('caption === "yoin-buttons"', text)
+        self.assertIn('resourceClass) === "plasmashell"', text)
         self.assertIn("workspace.cursorPos", text)
-        self.assertIn("yoinPlaceTimer", text)
-        self.assertIn("var winW = 280", text)
-        self.assertIn("var winH = 120", text)
-        self.assertIn("var fallbackX = 152", text)
-        self.assertIn("yoinPlaceTimer.stop()", text)
-
-    def test_title_quotes_do_not_break_the_script(self):
-        text = place_script('say "hi"', 0, 0, 1, 1)
-        self.assertIn(r'say \"hi\"', text)
+        self.assertIn("workspace.windowAdded.connect(track)", text)
+        self.assertIn("window.frameGeometry = target", text)
+        self.assertIn("skipTaskbar", text)
 
     def test_origin_sits_on_the_tray(self):
         # Panel along the bottom. Available area ends at y=1000. Tray is on the panel.

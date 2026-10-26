@@ -321,7 +321,7 @@ class Popup(QWidget):
         super().__init__(None)
         self.setWindowTitle("yoin-buttons")
         self.setWindowFlags(
-            Qt.WindowType.Tool
+            Qt.WindowType.Window
             | Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.NoDropShadowWindowHint
