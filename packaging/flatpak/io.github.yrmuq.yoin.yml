@@ -24,6 +24,7 @@ modules:
       - mkdir -p /app/share/yoin
       - cp -a yoin /app/share/yoin/yoin
       - cp -a assets /app/share/yoin/assets
+      - cp -a languages /app/share/yoin/languages
       - install -Dm644 assets/icon.png /app/share/icons/hicolor/256x256/apps/io.github.yrmuq.yoin.png
       - install -Dm644 packaging/flatpak/io.github.yrmuq.yoin.desktop /app/share/applications/io.github.yrmuq.yoin.desktop
       - install -Dm755 packaging/flatpak/yoin-run /app/bin/yoin

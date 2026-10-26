@@ -42,6 +42,8 @@ def defaults() -> dict:
         "webhook_id": "",
         "buttons": [""],
         "autostart": False,
+        "language": "",
+        "theme": "system",
     }
 
 
@@ -62,6 +64,10 @@ def normalize(data: dict) -> dict:
             cfg[key] = value.strip()
     cfg["buttons"] = _buttons(data.get("buttons"))
     cfg["autostart"] = data.get("autostart") is True
+    language = data.get("language")
+    cfg["language"] = language.strip() if isinstance(language, str) else ""
+    theme = data.get("theme")
+    cfg["theme"] = theme if theme in ("system", "light", "dark") else "system"
     return cfg
 
 

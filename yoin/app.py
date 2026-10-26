@@ -3,11 +3,12 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import uuid
 
-from PySide6.QtCore import QLockFile, QTimer
-from PySide6.QtGui import QGuiApplication, QIcon
+from PySide6.QtCore import QFileSystemWatcher, QLocale, QLockFile, Qt, QTimer
+from PySide6.QtGui import QGuiApplication, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from yoin.client import HaClient
@@ -18,7 +19,9 @@ from yoin.config import (
     save_config,
     config_dir,
 )
+from yoin.i18n import match_language, tr, trf, use
 from yoin.place import move_kwin
+from yoin.theme import dialog_stylesheet, prefers_dark, resolved_theme
 from yoin.ui import Popup, Settings, asset_path, labels_for, ons_for
 
 
@@ -35,22 +38,34 @@ class Controller:
         self.tray = QSystemTrayIcon(icon)
         self.tray.setToolTip("yoin")
         menu = QMenu()
-        menu.addAction("Settings", self.open_settings)
+        self._settings_action = menu.addAction(tr(1), self.open_settings)
         menu.addSeparator()
-        menu.addAction("Quit", QApplication.quit)
+        self._quit_action = menu.addAction(tr(2), QApplication.quit)
+        self.menu = menu
         self.tray.setContextMenu(menu)
         self.tray.activated.connect(self._activated)
         self.popup.triggered.connect(self._pressed)
         QApplication.instance().installEventFilter(self.popup)
         self.settings.connect_requested.connect(self._connect)
         self.settings.save_requested.connect(self._save)
+        self.settings.language_changed.connect(self._language)
+        self.settings.theme_changed.connect(self._theme)
         self.client.link.connect(self._link)
         self.client.notify.connect(self._notify)
         self.client.entities_ready.connect(self._entities)
-        self.client.entity_state.connect(self._entity_state)
         self.client.failed.connect(self._failed)
         self.client.registered.connect(self._registered)
         self.client.service_done.connect(self._service_done)
+        self.client.entity_state.connect(self._entity_state)
+        self._watcher = QFileSystemWatcher()
+        kde = str(config_dir().parent / "kdeglobals")
+        if os.path.isfile(kde):
+            self._watcher.addPath(kde)
+        self._watcher.fileChanged.connect(self._desktop_theme)
+        hints = QGuiApplication.styleHints()
+        if hasattr(hints, "colorSchemeChanged"):
+            hints.colorSchemeChanged.connect(self._desktop_theme)
+        self._apply_theme()
 
     def start(self) -> None:
         self.tray.show()
@@ -84,7 +99,7 @@ class Controller:
             values["device_name"] = hostname()
             self.settings.device.setText(values["device_name"])
         if not values["url"] or not values["token"]:
-            self.settings.set_status("Address and token are required")
+            self.settings.set_status(tr(19))
             return
         changed = (
             values["url"] != self.cfg["url"]
@@ -96,6 +111,8 @@ class Controller:
         self.cfg["device_name"] = values["device_name"]
         self.cfg["buttons"] = values["buttons"]
         self.cfg["autostart"] = values["autostart"]
+        self.cfg["language"] = values["language"]
+        self.cfg["theme"] = values["theme"]
         if not self.cfg["device_id"]:
             self.cfg["device_id"] = uuid.uuid4().hex
         if changed:
@@ -104,11 +121,13 @@ class Controller:
         try:
             apply_autostart(self.cfg["autostart"])
         except OSError as exc:
-            self.settings.set_status(f"Could not write autostart: {exc}")
+            self.settings.set_status(trf(20, exc))
             return
-        self._refresh_popup()
+        use(self.cfg["language"])
+        self._retranslate()
+        self._apply_theme()
         self.settings.set_busy(True)
-        self.settings.set_status("Connecting…")
+        self.settings.set_status(tr(21))
         self._start_client()
         if close:
             self.settings.hide()
@@ -161,7 +180,7 @@ class Controller:
         self._place_warned = True
         self.tray.showMessage(
             "yoin",
-            "KWin did not place the button window",
+            tr(23),
             QSystemTrayIcon.MessageIcon.Warning,
             8000,
         )
@@ -192,12 +211,12 @@ class Controller:
     def _link(self, up: bool) -> None:
         if not up:
             if self.tray.toolTip() == "yoin":
-                self.tray.setToolTip("yoin — disconnected")
+                self.tray.setToolTip("yoin — " + tr(24))
             return
         self._last_error = ""
         self.tray.setToolTip("yoin")
         self.settings.set_busy(False)
-        self.settings.set_status("Connected")
+        self.settings.set_status(tr(22))
 
     def _notify(self, title: str, message: str) -> None:
         self.tray.showMessage(title, message, QSystemTrayIcon.MessageIcon.Information, 8000)
@@ -231,7 +250,75 @@ class Controller:
 
     def _refresh_popup(self) -> None:
         buttons = self.cfg["buttons"]
-        self.popup.set_faces(labels_for(buttons, self.known), ons_for(buttons, self.known))
+        self.popup.set_faces(
+            labels_for(buttons, self.known),
+            ons_for(buttons, self.known),
+            [bool(item) for item in buttons],
+        )
+
+    def _language(self, name: str) -> None:
+        from yoin.i18n import languages
+
+        if name not in languages():
+            name = "English"
+        self.cfg["language"] = name
+        save_config(self.cfg)
+        use(name)
+        self._retranslate()
+
+    def _theme(self, choice: str) -> None:
+        if choice not in ("system", "light", "dark"):
+            choice = "system"
+        self.cfg["theme"] = choice
+        save_config(self.cfg)
+        self._apply_theme()
+
+    def _desktop_theme(self, *_args) -> None:
+        kde = config_dir().parent / "kdeglobals"
+        if kde.is_file() and str(kde) not in self._watcher.files():
+            self._watcher.addPath(str(kde))
+        if self.cfg.get("theme") in ("light", "dark"):
+            return
+        self._apply_theme()
+
+    def _system_dark(self) -> bool:
+        scheme = QGuiApplication.styleHints().colorScheme()
+        name = "unknown"
+        if scheme == Qt.ColorScheme.Dark:
+            name = "dark"
+        elif scheme == Qt.ColorScheme.Light:
+            name = "light"
+        text = None
+        kde = config_dir().parent / "kdeglobals"
+        if name == "unknown" and kde.is_file():
+            try:
+                text = kde.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                text = None
+        luma = None
+        if name == "unknown" and text is None:
+            color = QApplication.palette().color(QPalette.ColorRole.Window)
+            luma = 0.2126 * color.red() + 0.7152 * color.green() + 0.0722 * color.blue()
+        return prefers_dark(name, text, luma)
+
+    def _apply_theme(self) -> None:
+        kind = resolved_theme(self.cfg.get("theme") or "system", self._system_dark())
+        self.settings.apply_theme(kind)
+        self.popup.apply_theme(kind)
+        self.menu.setStyleSheet(dialog_stylesheet(kind))
+        icon_name = "tray-dark.png" if kind == "light" else "tray-light.png"
+        path = asset_path(icon_name)
+        if not os.path.isfile(path):
+            path = asset_path("icon.png")
+        self.tray.setIcon(QIcon(path))
+
+    def _retranslate(self) -> None:
+        self._settings_action.setText(tr(1))
+        self._quit_action.setText(tr(2))
+        self.settings.retranslate()
+        if self.tray.toolTip().startswith("yoin —"):
+            self.tray.setToolTip("yoin — " + tr(24))
+        self._refresh_popup()
 
 
 def main() -> int:
@@ -240,13 +327,21 @@ def main() -> int:
     app.setOrganizationName("yoin")
     app.setDesktopFileName("io.github.yrmuq.yoin")
     app.setQuitOnLastWindowClosed(False)
-    icon = QIcon(asset_path("icon.png"))
-    app.setWindowIcon(icon)
     config_dir().mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(config_dir() / "yoin.lock"))
     if not lock.tryLock(200):
         return 0
-    controller = Controller(load_config(), icon)
+    cfg = load_config()
+    if not cfg.get("language"):
+        cfg["language"] = match_language(list(QLocale.system().uiLanguages()))
+        try:
+            save_config(cfg)
+        except OSError:
+            pass
+    use(cfg["language"])
+    icon = QIcon(asset_path("icon.png"))
+    app.setWindowIcon(icon)
+    controller = Controller(cfg, icon)
     controller.lock = lock
     controller.start()
     return app.exec()

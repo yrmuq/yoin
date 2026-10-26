@@ -30,6 +30,7 @@ from yoin.ha import (
     state_event,
     ws_url,
 )
+from yoin.i18n import tr, trf
 from yoin.ws import WsClient
 
 
@@ -101,7 +102,7 @@ class HaClient(QObject):
     def run(self, entity_id: str, state: str = "") -> None:
         action = action_for(entity_id, state)
         if action is None or self._push_id is None:
-            self.failed.emit("Not connected")
+            self.failed.emit(tr(26))
             self.service_done.emit(entity_id, False)
             return
         domain, service = action
@@ -200,24 +201,24 @@ class HaClient(QObject):
             code = 0
         if code in (401, 403):
             self._want = False
-            self.failed.emit("Home Assistant rejected the token")
+            self.failed.emit(tr(27))
             return
         if code not in (200, 201):
             if err != QNetworkReply.NetworkError.NoError and not code:
-                self.failed.emit(err_s or "Could not reach Home Assistant")
+                self.failed.emit(err_s or tr(28))
             else:
-                self.failed.emit(f"Registration failed ({code})")
+                self.failed.emit(trf(29, code))
             self._schedule()
             return
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
-            self.failed.emit("Registration returned junk")
+            self.failed.emit(tr(30))
             self._schedule()
             return
         webhook = data.get("webhook_id") if isinstance(data, dict) else None
         if not isinstance(webhook, str) or not webhook:
-            self.failed.emit("Home Assistant did not return a webhook id")
+            self.failed.emit(tr(31))
             self._schedule()
             return
         self._webhook_id = webhook
@@ -227,7 +228,7 @@ class HaClient(QObject):
     def _on_socket_error(self, _err) -> None:
         if not self._want or self._reopen or self._registering:
             return
-        self.failed.emit(self._ws.errorString() or "Connection failed")
+        self.failed.emit(self._ws.errorString() or tr(32))
 
     def _on_disconnected(self) -> None:
         self._push_id = None
@@ -254,7 +255,7 @@ class HaClient(QObject):
             return
         if kind == "auth_invalid":
             self._want = False
-            self.failed.emit("Home Assistant rejected the token")
+            self.failed.emit(tr(27))
             self._ws.abort()
             return
         if kind == "auth_ok":
@@ -329,7 +330,7 @@ class HaClient(QObject):
             self.service_done.emit(entity, ok)
             if not ok:
                 err = data.get("error")
-                message = "The action failed"
+                message = tr(33)
                 if isinstance(err, dict) and err.get("message"):
                     message = str(err["message"])
                 self.failed.emit(message)

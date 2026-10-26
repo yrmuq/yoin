@@ -1,13 +1,13 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Tuesday: one prerelease tag if only dependency commits landed.
+# Friday evening: one prerelease tag if only dependency commits landed.
 # A manual run with kind=minor cuts X.(Y+1).0 and resets the patch.
 
 name: Release
 
 on:
   schedule:
-    - cron: "0 6 * * 2"
+    - cron: "30 20 * * 5"
   workflow_dispatch:
     inputs:
       kind:

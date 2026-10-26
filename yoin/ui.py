@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QEvent, Qt, Signal
-from PySide6.QtGui import QCursor, QPainter, QPalette, QPen
+from PySide6.QtGui import QCursor, QPainter, QPen
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
 from yoin import __version__
 from yoin.config import MAX_BUTTONS
 from yoin.ha import button_label, button_on
+from yoin.i18n import languages, tr
+from yoin.theme import colors, dialog_stylesheet, popup_stylesheet
 
 
 def asset_path(name: str) -> str:
@@ -63,7 +65,7 @@ class _ButtonRow(QWidget):
     def fill(self, entities: list[dict], selected: str) -> None:
         self.box.blockSignals(True)
         self.box.clear()
-        self.box.addItem("Not set", "")
+        self.box.addItem(tr(12), "")
         for ent in entities:
             label = ent["name"]
             if ent["name"] != ent["entity_id"]:
@@ -82,6 +84,8 @@ class _ButtonRow(QWidget):
 class Settings(QDialog):
     connect_requested = Signal()
     save_requested = Signal()
+    language_changed = Signal(str)
+    theme_changed = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -91,36 +95,39 @@ class Settings(QDialog):
         self.url.setPlaceholderText("http://homeassistant.local:8123")
         self.token = QLineEdit()
         self.token.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token.setPlaceholderText("Long-lived access token")
         self.device = QLineEdit()
-        self.hint = QLabel(
-            "The device name becomes notify.mobile_app_<name> in Home Assistant. "
-            "Spaces become underscores."
-        )
+        self.hint = QLabel()
+        self.hint.setObjectName("hint")
         self.hint.setWordWrap(True)
-        self.autostart = QCheckBox("Start with KDE")
+        self.autostart = QCheckBox()
         self.status = QLabel("")
         self.status.setWordWrap(True)
         self._entities: list[dict] = []
         self._rows: list[_ButtonRow] = []
-        connect = QPushButton("Connect")
-        save = QPushButton("Save")
+        connect = QPushButton()
+        save = QPushButton()
         connect.clicked.connect(self.connect_requested.emit)
         save.clicked.connect(self.save_requested.emit)
         self._connect = connect
+        self._save = save
         self._add = QPushButton("+")
         self._add.clicked.connect(self._add_row)
 
+        self._address = QLabel()
+        self._token = QLabel()
+        self._device = QLabel()
         form = QFormLayout()
-        form.addRow("Address", self.url)
-        form.addRow("Token", self.token)
-        form.addRow("Device name", self.device)
+        form.addRow(self._address, self.url)
+        form.addRow(self._token, self.token)
+        form.addRow(self._device, self.device)
         form.addRow(self.hint)
         form.addRow(self.autostart)
         connection = QWidget()
+        connection.setObjectName("page")
         connection.setLayout(form)
 
         self._list_host = QWidget()
+        self._list_host.setObjectName("page")
         self._list = QVBoxLayout(self._list_host)
         self._list.setContentsMargins(0, 0, 0, 0)
         self._list.addStretch(1)
@@ -129,13 +136,31 @@ class Settings(QDialog):
         scroll.setWidget(self._list_host)
         scroll.setMinimumHeight(220)
         buttons_page = QWidget()
+        buttons_page.setObjectName("page")
         buttons_lay = QVBoxLayout(buttons_page)
         buttons_lay.addWidget(scroll)
         buttons_lay.addWidget(self._add)
 
+        self.language = QComboBox()
+        for name in languages():
+            self.language.addItem(name, name)
+        self.language.currentIndexChanged.connect(self._language_picked)
+        self.theme = QComboBox()
+        self.theme.currentIndexChanged.connect(self._theme_picked)
+        self._language_label = QLabel()
+        self._theme_label = QLabel()
+        appearance_form = QFormLayout()
+        appearance_form.addRow(self._language_label, self.language)
+        appearance_form.addRow(self._theme_label, self.theme)
+        appearance = QWidget()
+        appearance.setObjectName("page")
+        appearance.setLayout(appearance_form)
+
         tabs = QTabWidget()
-        tabs.addTab(connection, "Connection")
-        tabs.addTab(buttons_page, "Buttons")
+        tabs.addTab(connection, "")
+        tabs.addTab(buttons_page, "")
+        tabs.addTab(appearance, "")
+        self._tabs = tabs
 
         bar = QHBoxLayout()
         bar.addStretch(1)
@@ -149,6 +174,29 @@ class Settings(QDialog):
         version.setAlignment(Qt.AlignmentFlag.AlignRight)
         lay.addWidget(version)
         self._render([""])
+        self.retranslate()
+        self.apply_theme("light")
+
+    def retranslate(self) -> None:
+        self._address.setText(tr(3))
+        self._token.setText(tr(4))
+        self._device.setText(tr(5))
+        self.hint.setText(tr(6))
+        self.autostart.setText(tr(7))
+        self._connect.setText(tr(8))
+        self._save.setText(tr(9))
+        self.token.setPlaceholderText(tr(25))
+        self._tabs.setTabText(0, tr(10))
+        self._tabs.setTabText(1, tr(11))
+        self._tabs.setTabText(2, tr(18))
+        self._language_label.setText(tr(13))
+        self._theme_label.setText(tr(14))
+        self._fill_theme()
+        selected = [row.entity() for row in self._rows] or [""]
+        self._render(selected)
+
+    def apply_theme(self, kind: str) -> None:
+        self.setStyleSheet(dialog_stylesheet(kind))
 
     def set_status(self, text: str) -> None:
         self.status.setText(text)
@@ -161,6 +209,8 @@ class Settings(QDialog):
         self.token.setText(cfg.get("token") or "")
         self.device.setText(cfg.get("device_name") or "")
         self.autostart.setChecked(cfg.get("autostart") is True)
+        self._select(self.language, cfg.get("language") or "English")
+        self._select(self.theme, cfg.get("theme") or "system")
         self._render(cfg.get("buttons") or [""])
 
     def values(self) -> dict:
@@ -170,6 +220,8 @@ class Settings(QDialog):
             "device_name": self.device.text().strip(),
             "buttons": [row.entity() for row in self._rows][:MAX_BUTTONS] or [""],
             "autostart": self.autostart.isChecked(),
+            "language": self.language.currentData() or "English",
+            "theme": self.theme.currentData() or "system",
         }
 
     def set_entities(self, entities: list[dict], selected: list[str]) -> None:
@@ -182,6 +234,29 @@ class Settings(QDialog):
             if not current and index < len(selected):
                 current = selected[index]
             row.fill(self._entities, current)
+
+    def _fill_theme(self) -> None:
+        current = self.theme.currentData() or "system"
+        self.theme.blockSignals(True)
+        self.theme.clear()
+        self.theme.addItem(tr(15), "system")
+        self.theme.addItem(tr(16), "light")
+        self.theme.addItem(tr(17), "dark")
+        self._select(self.theme, current)
+        self.theme.blockSignals(False)
+
+    def _select(self, box: QComboBox, value: str) -> None:
+        box.blockSignals(True)
+        index = box.findData(value)
+        box.setCurrentIndex(index if index >= 0 else 0)
+        box.blockSignals(False)
+
+    def _language_picked(self) -> None:
+        name = self.language.currentData() or "English"
+        self.language_changed.emit(name)
+
+    def _theme_picked(self) -> None:
+        self.theme_changed.emit(self.theme.currentData() or "system")
 
     def _render(self, selected: list[str]) -> None:
         while self._rows:
@@ -253,15 +328,22 @@ class Popup(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setFixedWidth(280)
         self.buttons: list[QPushButton] = []
+        self._bound: list[bool] = []
+        self._colors = colors("light")
         self._lay = QVBoxLayout(self)
         self._lay.setContentsMargins(14, 14, 14, 14)
         self._lay.setSpacing(8)
 
-    def set_faces(self, labels: list[str], ons: list[bool]) -> None:
+    def apply_theme(self, kind: str) -> None:
+        self._colors = colors(kind)
+        self.setStyleSheet(popup_stylesheet(kind))
+        self.update()
+
+    def set_faces(self, labels: list[str], ons: list[bool], bound: list[bool]) -> None:
         count = max(1, len(labels))
         while len(self.buttons) < count:
             index = len(self.buttons)
-            button = QPushButton("Not set")
+            button = QPushButton(tr(12))
             button.setMinimumHeight(40)
             button.clicked.connect(lambda _checked=False, i=index: self.triggered.emit(i))
             self.buttons.append(button)
@@ -272,11 +354,13 @@ class Popup(QWidget):
             button.setParent(None)
             button.deleteLater()
         padded_on = list(ons) + [False] * count
-        padded_label = list(labels) + ["Not set"] * count
-        for button, label, on in zip(self.buttons, padded_label, padded_on):
+        padded_label = list(labels) + [tr(12)] * count
+        padded_bound = list(bound) + [False] * count
+        self._bound = padded_bound
+        for button, label, on, is_bound in zip(self.buttons, padded_label, padded_on, padded_bound):
             button.setText(label)
-            button.setCheckable(label != "Not set")
-            button.setChecked(bool(on))
+            button.setCheckable(is_bound)
+            button.setChecked(bool(on) and is_bound)
         self.adjustSize()
 
     def eventFilter(self, watched, event) -> bool:
@@ -355,15 +439,24 @@ class Popup(QWidget):
     def paintEvent(self, _event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        pen = QPen(self.palette().color(QPalette.ColorRole.Mid))
+        pen = QPen(self._qcolor(self._colors["border"]))
         painter.setPen(pen)
-        painter.setBrush(self.palette().color(QPalette.ColorRole.Window))
+        painter.setBrush(self._qcolor(self._colors["bg"]))
         painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 16, 16)
         painter.end()
 
+    def _qcolor(self, value: str):
+        from PySide6.QtGui import QColor
+
+        return QColor(value)
+
 
 def labels_for(buttons: list[str], known: dict[str, dict]) -> list[str]:
-    return [button_label(entity_id, known.get(entity_id)) for entity_id in buttons]
+    labels = []
+    for entity_id in buttons:
+        label = button_label(entity_id, known.get(entity_id))
+        labels.append(tr(12) if label == "Not set" else label)
+    return labels
 
 
 def ons_for(buttons: list[str], known: dict[str, dict]) -> list[bool]:

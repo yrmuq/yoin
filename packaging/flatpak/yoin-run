@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 set -eu
 export YOIN_ASSETS="${YOIN_ASSETS:-/app/share/yoin/assets}"
+export YOIN_LANGUAGES="${YOIN_LANGUAGES:-/app/share/yoin/languages}"
 export PYTHONPATH="/app/share/yoin${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1

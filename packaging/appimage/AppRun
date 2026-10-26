@@ -5,6 +5,7 @@
 set -eu
 HERE="$(dirname "$(readlink -f "$0")")"
 export YOIN_ASSETS="${YOIN_ASSETS:-$HERE/assets}"
+export YOIN_LANGUAGES="${YOIN_LANGUAGES:-$HERE/payload/languages}"
 export PYTHONPATH="$HERE/payload${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONNOUSERSITE=1
 export PYTHONDONTWRITEBYTECODE=1

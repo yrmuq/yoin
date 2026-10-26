@@ -66,9 +66,10 @@ rm -f "$APPDIR/python/bin/pip" "$APPDIR/python/bin/pip3" "$APPDIR/python/bin/pip
 
 mkdir -p "$APPDIR/payload"
 cp -a "$ROOT/yoin" "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/README.md" "$APPDIR/payload/"
+cp -a "$ROOT/languages" "$APPDIR/payload/languages"
 cp -a "$PACK/BUNDLED.txt" "$APPDIR/payload/BUNDLED.txt"
 mv "$APPDIR/payload-pyside.txt" "$APPDIR/payload/PYSIDE.txt"
-cp -a "$ROOT/assets/icon.png" "$ROOT/assets/icon.svg" "$APPDIR/assets/"
+cp -a "$ROOT/assets/icon.png" "$ROOT/assets/icon.svg" "$ROOT/assets/tray-dark.png" "$ROOT/assets/tray-light.png" "$APPDIR/assets/"
 find "$APPDIR/payload" -type d -name __pycache__ -print0 | xargs -0r rm -rf
 find "$APPDIR/payload" -name '*.pyc' -delete
 

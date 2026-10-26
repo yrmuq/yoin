@@ -1,12 +1,12 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Monday: refresh the two pins Dependabot cannot see, and merge that PR.
+# Friday: refresh the two pins Dependabot cannot see, and merge that PR.
 
 name: Pins
 
 on:
   schedule:
-    - cron: "20 5 * * 1"
+    - cron: "20 5 * * 5"
   workflow_dispatch:
 
 permissions:
