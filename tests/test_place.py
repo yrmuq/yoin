@@ -39,7 +39,7 @@ class NotifyTests(unittest.TestCase):
         self.assertEqual(args[2], os.path.expanduser("~/.cache/yoin/notify.png"))
         self.assertEqual(args[3], "Door")
         self.assertEqual(args[4], "open")
-        self.assertEqual(args[6], {})
+        self.assertEqual(args[6]["desktop-entry"], "io.github.yrmuq.yoin")
         self.assertNotIn("transient", args[6])
         self.assertEqual(args[7], 8000)
         self.assertTrue(os.path.isfile(args[2]))
