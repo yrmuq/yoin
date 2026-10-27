@@ -5,3 +5,5 @@ squashfs-root/
 /dist/
 /packaging/appimage/build/
 .venv/
+/target
+*.AppImage

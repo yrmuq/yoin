@@ -1,0 +1,79 @@
+# Copyright (C) 2026 yrmuq
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Manual Rust AppImage. This file is for the dev branch only.
+# The published release is X.Y.0, taken from Cargo.toml. It is not a prerelease.
+
+name: Rust AppImage
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev file
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: yoin-rust-${{ hashFiles('Cargo.lock') }}
+
+      - name: Build
+        run: bash packaging/appimage/build.sh
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          VER="$(sed -n 's/^version = "\([0-9][0-9.]*\)"/\1/p' Cargo.toml | head -n 1)"
+          case "$VER" in
+            *.*.0) ;;
+            *)
+              echo "Cargo.toml version ${VER} is not X.Y.0" >&2
+              exit 1
+              ;;
+          esac
+          TAG="v${VER}"
+          printf '%s\n' '**Changes:**' '' 'Rust build of the tray program. The windows are slint and the tray is ksni. Qt is not linked.' > notes.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin "+refs/tags/${TAG}:refs/tags/${TAG}" || true
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            if [ "$(git rev-parse "${TAG}^{}")" != "$(git rev-parse HEAD)" ]; then
+              echo "tag ${TAG} already points at another commit" >&2
+              exit 1
+            fi
+          else
+            git tag -a "$TAG" -m "$(cat notes.md)"
+            git push origin "refs/tags/${TAG}"
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/yoin-x86_64.AppImage \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "yoin ${VER}" \
+              --notes-file notes.md
+          else
+            gh release create "$TAG" dist/yoin-x86_64.AppImage \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "yoin ${VER}" \
+              --notes-file notes.md
+          fi

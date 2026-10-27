@@ -2,19 +2,12 @@ yoin AppImage
 Copyright (C) 2026 yrmuq
 SPDX-License-Identifier: GPL-3.0-or-later
 
-This is a pre-release image, not a 1.0 release. x86_64 only.
+This is not a 1.0 release. x86_64 only.
 
-The image contains:
+yoin is GPL-3.0-or-later. See NOTICE. The program is Rust and is linked
+statically, including the tray (ksni) and the windows (slint, software
+renderer). Qt, PySide, and CPython are not in this image.
 
-  CPython    the install_only_stripped build named in packaging/appimage/build.sh
-             https://github.com/astral-sh/python-build-standalone
-             License: PSF-2.0
-
-  PySide6    the PySide6_Essentials wheel pip installed while building.
-             The exact version is PYSIDE.txt next to this file.
-             PySide6 is LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only.
-             It loads Qt, which is LGPL-3.0.
-             https://www.qt.io/
-             https://doc.qt.io/qtforpython/
-
-yoin itself is GPL-3.0-or-later. See NOTICE.
+Shared libraries copied next to the binary are listed in LIBS.txt. They
+keep their own licenses. Typical names are fontconfig, freetype, wayland,
+and xkbcommon. glibc is not bundled.
