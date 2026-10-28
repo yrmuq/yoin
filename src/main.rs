@@ -48,6 +48,15 @@ fn main() {
         Some(file) => file,
         None => return,
     };
+    if let Err(err) = slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name("femtovg".into())
+        .with_winit_window_attributes_hook(|attributes| attributes.with_transparent(true))
+        .select()
+    {
+        eprintln!("yoin: graphics: {err}");
+        return;
+    }
     let mut cfg = config::load_config(&config::config_path());
     let folder = i18n::language_dir();
     if cfg.language.is_empty() {
@@ -284,6 +293,14 @@ fn apply_theme(
     app.borrow_mut().dark = dark;
     settings.set_dark(dark);
     popup.set_dark(dark);
+    let font = theme::system_font();
+    let family = slint::SharedString::from(font.family);
+    settings.set_ui_font_family(family.clone());
+    popup.set_ui_font_family(family);
+    settings.set_ui_font_size(font.size_px);
+    popup.set_ui_font_size(font.size_px);
+    settings.set_ui_font_weight(font.weight);
+    popup.set_ui_font_weight(font.weight);
     let file = if dark { "tray-light.png" } else { "tray-dark.png" };
     let mut path = icons::asset_path(file);
     if !path.is_file() {

@@ -12,29 +12,49 @@ export struct Choice {
     index: int,
 }
 
+// Breeze Light / Breeze Dark from KDE Plasma 6. Corner radius is 5px.
+export global Breeze {
+    in-out property <bool> dark: false;
+    out property <color> window: dark ? #202326 : #eff0f1;
+    out property <color> button: dark ? #292c30 : #fcfcfc;
+    out property <color> button-hover: dark ? #32363b : #f3f4f5;
+    out property <color> fg: dark ? #fcfcfc : #232629;
+    out property <color> inactive: dark ? #a1a9b1 : #707d8a;
+    out property <color> selection: #3daee9;
+    out property <color> selection-fg: dark ? #fcfcfc : #ffffff;
+    out property <color> frame: dark ? #4c4e51 : #c6c8c9;
+    out property <length> radius: 5px;
+}
+
+component Label inherits Text {
+    color: Breeze.fg;
+}
+
+component Hint inherits Text {
+    color: Breeze.inactive;
+    wrap: word-wrap;
+}
+
 component PopupButton inherits Rectangle {
     in property <string> label;
     in property <bool> on;
-    in property <color> button-bg;
-    in property <color> button-fg;
-    in property <color> accent;
-    in property <color> on-fg;
-    in property <color> border;
     callback clicked;
-    height: 40px;
-    border-radius: 10px;
+    height: 36px;
+    border-radius: Breeze.radius;
     border-width: 1px;
-    border-color: on ? accent : border;
-    background: on ? accent : button-bg;
-    Text {
+    property <bool> hovered: touch.has-hover;
+    border-color: on || hovered ? Breeze.selection : Breeze.frame;
+    background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
+    Label {
         text: root.label;
-        color: root.on ? root.on-fg : root.button-fg;
+        color: root.on ? Breeze.selection-fg : Breeze.fg;
         horizontal-alignment: center;
         vertical-alignment: center;
         overflow: elide;
         width: parent.width - 16px;
     }
-    TouchArea {
+    touch := TouchArea {
+        mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }
 }
@@ -45,35 +65,32 @@ export component Popup inherits Window {
     always-on-top: true;
     in-out property <[Face]> faces;
     in-out property <bool> dark: false;
+    in-out property <string> ui-font-family: "Noto Sans";
+    in-out property <length> ui-font-size: 13.333px;
+    in-out property <int> ui-font-weight: 400;
+    default-font-family: ui-font-family;
+    default-font-size: ui-font-size;
+    default-font-weight: ui-font-weight;
     changed dark => {
+        Breeze.dark = root.dark;
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
     callback pressed(int);
     width: 280px;
-    height: 16px + max(1, faces.length) * 48px;
+    height: 10px + max(1, faces.length) * 42px;
     background: transparent;
-    property <color> bg: dark ? #1A1C22 : #F4F5F7;
-    property <color> fg: dark ? #F2F4F7 : #1C1E22;
-    property <color> button-bg: dark ? #2E333D : #E6E8ED;
-    property <color> border: dark ? #3A3F4A : #D5D8DE;
-    property <color> accent: dark ? #D7DEE8 : #2F3A4A;
-    property <color> on-fg: dark ? #1A1C22 : #F4F6F8;
     Rectangle {
-        background: bg;
-        border-radius: 14px;
+        background: Breeze.window;
+        border-radius: Breeze.radius;
         border-width: 1px;
-        border-color: root.border;
+        border-color: Breeze.frame;
+        clip: true;
         VerticalBox {
             padding: 8px;
-            spacing: 8px;
+            spacing: 6px;
             for face[i] in faces: PopupButton {
                 label: face.text;
                 on: face.on;
-                button-bg: root.button-bg;
-                button-fg: root.fg;
-                accent: root.accent;
-                on-fg: root.on-fg;
-                border: root.border;
                 clicked => { root.pressed(i); }
             }
         }
@@ -83,7 +100,14 @@ export component Popup inherits Window {
 export component Settings inherits Window {
     title: "yoin";
     in-out property <bool> dark: false;
+    in-out property <string> ui-font-family: "Noto Sans";
+    in-out property <length> ui-font-size: 13.333px;
+    in-out property <int> ui-font-weight: 400;
+    default-font-family: ui-font-family;
+    default-font-size: ui-font-size;
+    default-font-weight: ui-font-weight;
     changed dark => {
+        Breeze.dark = root.dark;
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
     in-out property <string> address;
@@ -122,7 +146,7 @@ export component Settings inherits Window {
     callback theme(int);
     preferred-width: 560px;
     preferred-height: 640px;
-    background: dark ? #1A1C22 : #F4F5F7;
+    background: Breeze.window;
     VerticalBox {
         padding: 12px;
         spacing: 8px;
@@ -133,24 +157,20 @@ export component Settings inherits Window {
                 VerticalBox {
                     alignment: start;
                     padding: 8px;
-                    Text { text: root.t-address; }
+                    Label { text: root.t-address; }
                     addr := LineEdit {
                         text <=> root.address;
                         placeholder-text: "http://homeassistant.local:8123";
                     }
-                    Text { text: root.t-token; }
+                    Label { text: root.t-token; }
                     LineEdit {
                         text <=> root.token;
                         placeholder-text: root.t-token-hint;
                         input-type: password;
                     }
-                    Text { text: root.t-device; }
+                    Label { text: root.t-device; }
                     LineEdit { text <=> root.device; }
-                    Text {
-                        text: root.t-device-hint;
-                        wrap: word-wrap;
-                        font-size: 12px;
-                    }
+                    Hint { text: root.t-device-hint; }
                     CheckBox {
                         text: root.t-autostart;
                         checked <=> root.autostart;
@@ -159,7 +179,7 @@ export component Settings inherits Window {
                         Button { text: root.t-connect; clicked => { root.connect(); } }
                         Button { text: root.t-save; clicked => { root.save(); } }
                     }
-                    Text { text: root.status; wrap: word-wrap; }
+                    Hint { text: root.status; }
                 }
             }
             Tab {
@@ -191,13 +211,13 @@ export component Settings inherits Window {
                 VerticalBox {
                     alignment: start;
                     padding: 8px;
-                    Text { text: root.t-language; }
+                    Label { text: root.t-language; }
                     lang := ComboBox {
                         model: root.language-names;
                         current-index: root.language-index;
                         selected => { root.language(lang.current-index); }
                     }
-                    Text { text: root.t-theme; }
+                    Label { text: root.t-theme; }
                     theme := ComboBox {
                         model: root.theme-names;
                         current-index: root.theme-index;
@@ -206,10 +226,9 @@ export component Settings inherits Window {
                 }
             }
         }
-        Text {
+        Hint {
             text: root.version;
             horizontal-alignment: right;
-            font-size: 12px;
         }
     }
 }

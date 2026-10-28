@@ -29,6 +29,22 @@ if ! command -v file >/dev/null 2>&1; then
     exit 1
 fi
 
+# The workflow installs fontconfig, xkbcommon, and wayland. FemtoVG also
+# needs the OpenGL and EGL headers. The driver itself stays on the host.
+if ! pkg-config --exists gl || ! pkg-config --exists egl; then
+    echo "installing OpenGL and EGL headers"
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        SUDO=sudo
+    elif [ "$(id -u)" -eq 0 ]; then
+        SUDO=
+    else
+        echo "OpenGL and EGL development files are required (libgl, libegl)." >&2
+        exit 1
+    fi
+    $SUDO apt-get update
+    $SUDO apt-get install -y libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+fi
+
 cd "$ROOT"
 cargo build --release
 BIN="$ROOT/target/release/yoin"
@@ -54,6 +70,9 @@ ldd "$BIN" | awk '/=>/ { print $3 }' | while read -r lib; do
     base=$(basename "$lib")
     case "$base" in
         libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|libutil.so*|ld-linux*)
+            continue
+            ;;
+        libGL.so*|libEGL.so*|libGLdispatch.so*|libGLX.so*|libOpenGL.so*|libGLESv2.so*|libGLX_mesa.so*|libEGL_mesa.so*|libglapi.so*|libdrm.so*|libgbm.so*|libwayland-egl.so*|libgallium*.so*)
             continue
             ;;
     esac

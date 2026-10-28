@@ -5,9 +5,11 @@ SPDX-License-Identifier: GPL-3.0-or-later
 This is not a 1.0 release. x86_64 only.
 
 yoin is GPL-3.0-or-later. See NOTICE. The program is Rust and is linked
-statically, including the tray (ksni) and the windows (slint, software
-renderer). Qt, PySide, and CPython are not in this image.
+statically, including the tray (ksni) and the windows (slint, FemtoVG
+OpenGL). Qt, PySide, and CPython are not in this image.
 
 Shared libraries copied next to the binary are listed in LIBS.txt. They
-keep their own licenses. Typical names are fontconfig, freetype, wayland,
-and xkbcommon. glibc is not bundled.
+keep their own licenses. Typical names are fontconfig and freetype. glibc
+is not bundled. Wayland, xkbcommon, libGL, libEGL, and the GPU driver are
+not bundled either: the host provides them, so the window can composite
+transparent corners.

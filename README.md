@@ -85,7 +85,7 @@ If the host system lacks `FUSE` support, extract and run the bundle directly:
 
 ### From source
 
-Rust 1.80 or newer, a C compiler, and the Wayland, xkbcommon, and fontconfig headers. The tray is `ksni`. The windows are `slint` with the software renderer. Qt is not used.
+Rust 1.80 or newer, a C compiler, and the Wayland, xkbcommon, fontconfig, OpenGL, and EGL headers. The tray is `ksni`. The windows are `slint` with the FemtoVG OpenGL renderer. The AppImage does not bundle the GPU driver. Qt is not used.
 
 ```sh
 cargo run --release

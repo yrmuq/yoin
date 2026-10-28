@@ -63,7 +63,7 @@ pub fn spawn(mut cmds: mpsc::UnboundedReceiver<ClientCmd>, out: mpsc::UnboundedS
                             _ = tokio::time::sleep(Duration::from_secs(5)) => {}
                             cmd = cmds.recv() => match cmd {
                                 Some(ClientCmd::Start(next)) => session = Some(next),
-                                Some(ClientCmd::Call { .. }) => {}
+                                Some(ClientCmd::Call { entity, state }) => calls.push((entity, state)),
                                 None => return,
                             }
                         }
@@ -142,7 +142,13 @@ async fn run_once(
                         writer.abort();
                         return Loop::Retry { session: next, immediate: true };
                     }
-                    Some(ClientCmd::Call { entity, state }) => calls.push((entity, state)),
+                    Some(ClientCmd::Call { entity, state }) => {
+                        if push_id.is_none() {
+                            calls.push((entity, state));
+                        } else {
+                            send_service(&tx, &mut next_id, &mut service_ids, out, &entity, &state);
+                        }
+                    }
                     None => {
                         writer.abort();
                         return Loop::Stop;
@@ -179,6 +185,10 @@ async fn run_once(
                         send(&tx, next_id, json!({"type": "subscribe_events", "event_type": "state_changed"}));
                         let _ = out.send(ClientEv::Linked(true));
                         let _ = out.send(ClientEv::Status(22));
+                        let queued: Vec<_> = calls.drain(..).collect();
+                        for (entity, state) in queued {
+                            send_service(&tx, &mut next_id, &mut service_ids, out, &entity, &state);
+                        }
                     }
                     "ping" => {
                         let id = data.get("id").cloned().unwrap_or(Value::Null);
@@ -233,22 +243,33 @@ async fn run_once(
                     }
                     _ => {}
                 }
-                while let Some((entity, state)) = calls.pop() {
-                    if push_id.is_none() {
-                        let _ = out.send(ClientEv::Status(26));
-                        continue;
-                    }
-                    let Some((domain, service)) = ha::action_for(&entity, &state) else {
-                        let _ = out.send(ClientEv::Status(33));
-                        continue;
-                    };
-                    next_id += 1;
-                    service_ids.push((next_id, entity.clone()));
-                    send(&tx, next_id, json!({"type": "call_service", "domain": domain, "service": service, "target": {"entity_id": entity}}));
-                }
             }
         }
     }
+}
+
+fn send_service(
+    tx: &tokio::sync::mpsc::UnboundedSender<String>,
+    next_id: &mut i64,
+    service_ids: &mut Vec<(i64, String)>,
+    out: &tokio::sync::mpsc::UnboundedSender<ClientEv>,
+    entity: &str,
+    state: &str,
+) {
+    let Some((domain, service)) = ha::action_for(entity, state) else {
+        let _ = out.send(ClientEv::Status(33));
+        return;
+    };
+    *next_id += 1;
+    service_ids.push((*next_id, entity.to_string()));
+    let body = json!({
+        "id": *next_id,
+        "type": "call_service",
+        "domain": domain,
+        "service": service,
+        "target": {"entity_id": entity},
+    });
+    let _ = tx.send(body.to_string());
 }
 
 async fn register(session: &Session) -> Result<String, u16> {
