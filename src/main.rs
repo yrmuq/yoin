@@ -6,6 +6,7 @@ mod config;
 mod ha;
 mod icons;
 mod i18n;
+mod notices;
 mod notify;
 mod place;
 mod theme;
@@ -50,12 +51,7 @@ struct App {
     placer_ok: bool,
     place_warned: bool,
     status: String,
-    notes: Vec<Note>,
-}
-
-struct Note {
-    title: String,
-    message: String,
+    notes: Vec<notices::Note>,
 }
 
 struct Shell {
@@ -108,6 +104,7 @@ fn main() {
     let (tray_tx, mut tray_rx) = tokio::sync::mpsc::unbounded_channel();
     let (client_tx, client_rx) = tokio::sync::mpsc::unbounded_channel();
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel();
+    let shot_tx = ev_tx.clone();
     let view = std::sync::Arc::new(std::sync::Mutex::new(TrayView {
         settings: catalog.tr(1),
         quit: catalog.tr(2),
@@ -142,7 +139,7 @@ fn main() {
             placer_ok,
             place_warned: false,
             status: String::new(),
-            notes: Vec::new(),
+            notes: notices::load(),
         })),
         shell: Rc::new(RefCell::new(Shell {
             settings: None,
@@ -168,6 +165,7 @@ fn main() {
     let ctx_timer = ctx.clone();
     let last_toggle = Cell::new(None::<Instant>);
     let mut sharpen_left = 0u8;
+    let mut age_tick = Instant::now();
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(80), move || {
         let mut toggles = 0u32;
@@ -223,9 +221,12 @@ fn main() {
                     }
                 }
                 ClientEv::Notify { title, message, image } => {
+                    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
                     {
                         let mut app = ctx_timer.app.borrow_mut();
-                        remember_note(&mut app.notes, title.clone(), message.clone());
+                        let dropped = notices::push(&mut app.notes, notices::Note { title: title.clone(), message: message.clone(), at, image: String::new() });
+                        notices::forget(&dropped);
+                        notices::save(&app.notes);
                     }
                     if let Some(popup) = popup_of(&ctx_timer.shell) {
                         refresh_popup(&ctx_timer.app, &popup);
@@ -234,13 +235,37 @@ fn main() {
                     let icon = icon.display().to_string();
                     let base = ctx_timer.app.borrow().cfg.url.clone();
                     let token = ctx_timer.app.borrow().cfg.token.clone();
+                    let back = shot_tx.clone();
                     ctx_timer.rt.spawn(async move {
                         let photo = match image {
                             Some(image) => notify::fetch_image(&base, &token, &image).await,
                             None => None,
                         };
-                        notify::announce(&title, &message, &icon, photo.as_deref()).await;
+                        let stored = photo.as_deref().and_then(|path| notices::keep_shot(std::path::Path::new(path)));
+                        if let Some(path) = stored.clone() {
+                            let _ = back.send(ClientEv::Shot { at, path });
+                        }
+                        let shown = stored.as_deref().or(photo.as_deref());
+                        notify::announce(&title, &message, &icon, shown).await;
                     });
+                }
+                ClientEv::Shot { at, path } => {
+                    let kept = {
+                        let mut app = ctx_timer.app.borrow_mut();
+                        if notices::attach(&mut app.notes, at, path.clone()) {
+                            notices::save(&app.notes);
+                            true
+                        } else {
+                            false
+                        }
+                    };
+                    if kept {
+                        if let Some(popup) = popup_of(&ctx_timer.shell) {
+                            refresh_popup(&ctx_timer.app, &popup);
+                        }
+                    } else {
+                        notices::forget(&[path]);
+                    }
                 }
                 ClientEv::Linked(up) => {
                     let id = if up { 22 } else { 24 };
@@ -266,6 +291,12 @@ fn main() {
                 }
             }
             sharpen_left -= 1;
+        }
+        if ctx_timer.app.borrow().popup_open && age_tick.elapsed() >= Duration::from_secs(60) {
+            age_tick = Instant::now();
+            if let Some(popup) = popup_of(&ctx_timer.shell) {
+                refresh_popup(&ctx_timer.app, &popup);
+            }
         }
     });
     // ksni is not a Slint tray icon, so an idle popup must not end the process.
@@ -650,19 +681,23 @@ fn refresh_popup(app: &Rc<RefCell<App>>, popup: &Popup) {
     popup.set_button_size(app.cfg.button_size as f32);
     popup.set_pinned(app.pinned);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
-    let notices: Vec<Notice> = app.notes.iter().map(|note| Notice {
-        title: note.title.clone().into(),
-        message: note.message.clone().into(),
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+    let language = app.cfg.language.clone();
+    let notices: Vec<Notice> = app.notes.iter().map(|note| {
+        let loaded = if note.image.is_empty() {
+            None
+        } else {
+            slint::Image::load_from_path(std::path::Path::new(&note.image)).ok()
+        };
+        Notice {
+            title: note.title.clone().into(),
+            message: note.message.clone().into(),
+            when: notices::ago(note.at, now, &language, &app.catalog).into(),
+            has_image: loaded.is_some(),
+            image: loaded.unwrap_or_default(),
+        }
     }).collect();
     popup.set_notices(ModelRc::new(VecModel::from(notices)));
-}
-
-fn remember_note(notes: &mut Vec<Note>, title: String, message: String) {
-    notes.push(Note { title, message });
-    if notes.len() > 3 {
-        let extra = notes.len() - 3;
-        notes.drain(0..extra);
-    }
 }
 
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -1017,6 +1052,13 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
             popup.set_pinned(next);
         }
     });
+    let app_shot = ctx.app.clone();
+    popup.on_open_shot(move |index| {
+        let path = app_shot.borrow().notes.get(index as usize).map(|note| note.image.clone()).unwrap_or_default();
+        if std::path::Path::new(&path).is_file() {
+            let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+        }
+    });
 }
 
 fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Settings, up: bool) {
@@ -1091,21 +1133,4 @@ fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::Un
     settings.set_status(app.borrow().catalog.tr(21).into());
     start_client(app, tx);
     close
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_three_notices_are_kept_oldest_first() {
-        let mut notes = Vec::new();
-        remember_note(&mut notes, "a".into(), "1".into());
-        remember_note(&mut notes, "b".into(), "2".into());
-        remember_note(&mut notes, "c".into(), "3".into());
-        remember_note(&mut notes, "d".into(), "4".into());
-        assert_eq!(notes.len(), 3);
-        assert_eq!(notes[0].title, "b");
-        assert_eq!(notes[2].title, "d");
-    }
 }

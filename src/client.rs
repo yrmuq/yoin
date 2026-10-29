@@ -34,6 +34,7 @@ pub enum ClientEv {
     Entities(Vec<Entity>),
     State(Entity),
     Notify { title: String, message: String, image: Option<String> },
+    Shot { at: i64, path: String },
     Linked(bool),
 }
 

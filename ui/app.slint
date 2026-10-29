@@ -12,6 +12,9 @@ export struct Face {
 export struct Notice {
     title: string,
     message: string,
+    when: string,
+    image: image,
+    has-image: bool,
 }
 
 export struct Choice {
@@ -327,6 +330,7 @@ export component Popup inherits Window {
     callback configure();
     callback open-home();
     callback pin-toggled();
+    callback open-shot(int);
     in-out property <image> icon-open: @image-url("icons/open-link.svg");
     in-out property <image> icon-configure: @image-url("icons/configure.svg");
     in-out property <image> icon-pin: @image-url("icons/window-pin.svg");
@@ -343,10 +347,11 @@ export component Popup inherits Window {
         : (Math.max(root.faces.length, 1) * (root.button-size + gap) - gap);
     in-out property <[Notice]> notices;
     property <length> note-gap: 8px;
-    property <length> note-row: 44px;
+    property <length> note-row: 62px;
+    property <length> note-rule: 1px;
     property <bool> has-notes: root.notices.length > 0;
     property <length> notes-h: root.has-notes
-        ? (root.pad * 2 + root.notices.length * root.note-row + Math.max(root.notices.length - 1, 0) * 4px)
+        ? (root.pad * 2 + root.notices.length * root.note-row + Math.max(root.notices.length - 1, 0) * root.note-rule)
         : 0px;
     property <length> stack-gap: root.has-notes ? root.note-gap : 0px;
     property <length> card-h: root.pad + 32px + 4px + root.body-h + root.pad;
@@ -368,26 +373,61 @@ export component Popup inherits Window {
         clip: true;
         VerticalLayout {
             padding: root.pad;
-            spacing: 4px;
-            for note in root.notices: Rectangle {
-                height: root.note-row;
-                background: transparent;
-                VerticalLayout {
-                    alignment: start;
-                    Text {
-                        text: note.title;
-                        color: Breeze.fg;
-                        font-weight: 600;
-                        overflow: elide;
-                        wrap: no-wrap;
-                        height: note.title == "" ? 0px : 18px;
+            spacing: 0px;
+            for note[i] in root.notices: VerticalLayout {
+                spacing: 0px;
+                if i > 0: Rectangle {
+                    height: root.note-rule;
+                    background: Breeze.frame;
+                }
+                HorizontalLayout {
+                    height: root.note-row;
+                    spacing: 8px;
+                    alignment: center;
+                    if note.has-image: Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        clip: true;
+                        border-radius: 3px;
+                        Image {
+                            width: parent.width;
+                            height: parent.height;
+                            source: note.image;
+                            image-fit: cover;
+                        }
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { root.open-shot(i); }
+                        }
                     }
-                    Text {
-                        text: note.message;
-                        color: Breeze.inactive;
-                        overflow: elide;
-                        wrap: no-wrap;
-                        vertical-alignment: center;
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 0px;
+                        Text {
+                            text: note.title;
+                            color: Breeze.fg;
+                            font-weight: 600;
+                            overflow: elide;
+                            wrap: no-wrap;
+                            height: note.title == "" ? 0px : 18px;
+                        }
+                        Text {
+                            text: note.message;
+                            color: Breeze.fg;
+                            overflow: elide;
+                            wrap: no-wrap;
+                            height: 18px;
+                        }
+                        Text {
+                            text: note.when;
+                            color: Breeze.inactive;
+                            overflow: elide;
+                            wrap: no-wrap;
+                            font-size: root.ui-font-size * 0.85;
+                            height: 16px;
+                        }
                     }
                 }
             }
