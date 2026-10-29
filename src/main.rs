@@ -637,8 +637,10 @@ fn apply_theme(
     tray: &TrayHandle,
     rt: &tokio::runtime::Handle,
 ) {
-    let dark = theme::resolved(&app.borrow().cfg.theme, theme::system_dark()) == "dark";
+    let choice = app.borrow().cfg.theme.clone();
+    let dark = theme::resolved(&choice, theme::system_dark()) == "dark";
     app.borrow_mut().dark = dark;
+    let colors = theme::system_palette(&choice);
     let font = theme::system_font();
     let family = slint::SharedString::from(font.family);
     if let Some(settings) = settings {
@@ -646,12 +648,14 @@ fn apply_theme(
         settings.set_ui_font_family(family.clone());
         settings.set_ui_font_size(font.size_px);
         settings.set_ui_font_weight(font.weight);
+        paint_breeze(&settings.global::<Breeze>(), &colors);
     }
     if let Some(popup) = popup {
         popup.set_dark(dark);
         popup.set_ui_font_family(family);
         popup.set_ui_font_size(font.size_px);
         popup.set_ui_font_weight(font.weight);
+        paint_breeze(&popup.global::<Breeze>(), &colors);
     }
     let file = if dark { "tray-light.png" } else { "tray-dark.png" };
     let mut path = icons::asset_path(file);
@@ -664,6 +668,19 @@ fn apply_theme(
         }
         rt.block_on(tray.update(|_| ()));
     }
+}
+
+fn paint_breeze(breeze: &Breeze, colors: &theme::UiPalette) {
+    let rgb = |color: theme::Rgb| slint::Color::from_rgb_u8(color.r, color.g, color.b);
+    breeze.set_window(rgb(colors.window));
+    breeze.set_button(rgb(colors.button));
+    breeze.set_button_hover(rgb(colors.button_hover));
+    breeze.set_fg(rgb(colors.text));
+    breeze.set_inactive(rgb(colors.inactive));
+    breeze.set_selection(rgb(colors.accent));
+    breeze.set_selection_fg(rgb(colors.accent_text));
+    breeze.set_frame(rgb(colors.frame));
+    breeze.set_outline(rgb(colors.outline));
 }
 
 fn wire_settings(ctx: &Ctx, settings: &Settings) {

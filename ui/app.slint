@@ -1,7 +1,7 @@
 // Copyright (C) 2026 yrmuq
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, Slider, TabWidget, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, TabWidget, VerticalBox, HorizontalBox } from "std-widgets.slint";
 
 export struct Face {
     text: string,
@@ -15,17 +15,19 @@ export struct Choice {
     editing: bool,
 }
 
-// Breeze Light / Breeze Dark from KDE Plasma 6. Corner radius is 5px.
+// Colors are filled from the active KDE scheme. Defaults are current Breeze Light.
 export global Breeze {
     in-out property <bool> dark: false;
-    out property <color> window: dark ? #202326 : #eff0f1;
-    out property <color> button: dark ? #292c30 : #fcfcfc;
-    out property <color> button-hover: dark ? #32363b : #f3f4f5;
-    out property <color> fg: dark ? #fcfcfc : #232629;
-    out property <color> inactive: dark ? #a1a9b1 : #707d8a;
-    out property <color> selection: #3daee9;
-    out property <color> selection-fg: dark ? #fcfcfc : #ffffff;
-    out property <color> frame: dark ? #4c4e51 : #c6c8c9;
+    in-out property <color> window: #eff0f1;
+    in-out property <color> button: #fcfcfc;
+    in-out property <color> button-hover: #f6f6f7;
+    in-out property <color> fg: #232629;
+    in-out property <color> inactive: #707d8a;
+    in-out property <color> selection: #3daee9;
+    in-out property <color> selection-fg: #ffffff;
+    in-out property <color> frame: #c6c8c9;
+    // Breeze focusOutlineColor: 85% accent mixed with 15% text.
+    in-out property <color> outline: #399acc;
     out property <length> radius: 5px;
 }
 
@@ -82,6 +84,8 @@ component ToolButton inherits Rectangle {
     height: 26px;
     border-radius: Breeze.radius;
     background: active ? Breeze.selection : (hover.has-hover ? Breeze.button-hover : transparent);
+    border-width: active ? 1px : 0;
+    border-color: Breeze.outline;
     VerticalLayout {
         alignment: center;
         HorizontalLayout {
@@ -138,6 +142,66 @@ component GearGlyph inherits Path {
     commands: "M 2 4.2 H 14 M 2 8 H 14 M 2 11.8 H 14 M 5 2.8 V 5.6 M 10.6 6.6 V 9.4 M 7 10.4 V 13.2";
 }
 
+component SizeSlider inherits Rectangle {
+    in-out property <float> value: 40;
+    in property <float> minimum: 32;
+    in property <float> maximum: 80;
+    callback changed(float);
+    height: 22px;
+    min-width: 120px;
+    horizontal-stretch: 1;
+    property <length> knob: 16px;
+    property <float> span: Math.max(root.maximum - root.minimum, 1);
+    property <float> pos: Math.max(0, Math.min((root.value - root.minimum) / root.span, 1));
+    property <length> travel: Math.max(root.width - root.knob, 1px);
+    Rectangle {
+        y: (parent.height - 4px) / 2;
+        height: 4px;
+        width: parent.width;
+        border-radius: 2px;
+        background: Breeze.frame;
+        border-width: 1px;
+        border-color: Breeze.outline;
+    }
+    Rectangle {
+        y: (parent.height - 4px) / 2;
+        height: 4px;
+        width: root.pos * root.travel + root.knob / 2;
+        border-radius: 2px;
+        background: Breeze.selection;
+    }
+    Rectangle {
+        x: root.pos * root.travel;
+        y: (parent.height - root.knob) / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: root.knob / 2;
+        background: Breeze.button;
+        border-width: 1px;
+        border-color: Breeze.outline;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        moved => {
+            if (area.pressed) {
+                root.seek(area.mouse-x);
+            }
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.seek(area.mouse-x);
+            }
+            EventResult.accept
+        }
+    }
+    function seek(x: length) {
+        let t = Math.max(0, Math.min((x - root.knob / 2) / root.travel, 1));
+        let next = root.minimum + t * root.span;
+        root.value = next;
+        root.changed(next);
+    }
+}
+
 component CheckGlyph inherits Path {
     in property <color> ink;
     width: 14px;
@@ -172,7 +236,7 @@ component PopupButton inherits Rectangle {
     border-radius: Breeze.radius;
     border-width: 1px;
     property <bool> hovered: touch.has-hover;
-    border-color: on || hovered ? Breeze.selection : Breeze.frame;
+    border-color: on || hovered ? Breeze.outline : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
     property <length> icon-side: Math.min(20px, root.button-height * 0.46);
     HorizontalLayout {
@@ -219,7 +283,7 @@ component TileButton inherits Rectangle {
     border-radius: Breeze.radius;
     border-width: 1px;
     property <bool> hovered: touch.has-hover;
-    border-color: on || hovered ? Breeze.selection : Breeze.frame;
+    border-color: on || hovered ? Breeze.outline : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
     property <length> icon-side: Math.max(16px, root.side * 0.32);
     VerticalLayout {
@@ -559,7 +623,7 @@ export component Settings inherits Window {
                         selected => { root.layout(lay.current-index); }
                     }
                     Label { text: root.t-size + ": " + Math.round(root.button-size-value); }
-                    size := Slider {
+                    size := SizeSlider {
                         minimum: 32;
                         maximum: 80;
                         value <=> root.button-size-value;
