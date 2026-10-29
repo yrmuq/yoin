@@ -36,6 +36,27 @@ function clamp(value, start, end) {
     return Math.max(start, Math.min(value, Math.max(start, end)));
 }
 
+function ratioOf(window) {
+    const output = window && window.output;
+    const ratio = output && output.devicePixelRatio;
+    return ratio > 0 ? ratio : 1;
+}
+
+function snap(value, ratio) {
+    return Math.round(value * ratio) / ratio;
+}
+
+function snapTopLeft(window) {
+    const ratio = ratioOf(window);
+    const frame = window.frameGeometry;
+    const x = snap(frame.x, ratio);
+    const y = snap(frame.y, ratio);
+    if (x === frame.x && y === frame.y) {
+        return;
+    }
+    window.frameGeometry = { x: x, y: y, width: frame.width, height: frame.height };
+}
+
 function placement(size, area, anchor) {
     let x = area.x + area.width - size.width - GAP;
     let y = area.y + GAP;
@@ -119,7 +140,10 @@ function place(entry) {
     }
     const output = entry.anchor ? entry.anchor.panel.output : window.output;
     const area = workspace.clientArea(KWin.MaximizeArea, output, workspace.currentDesktop);
+    const ratio = ratioOf(window);
     const target = placement(frame, area, entry.anchor);
+    target.x = snap(target.x, ratio);
+    target.y = snap(target.y, ratio);
     if (frame.x === target.x && frame.y === target.y) {
         return;
     }
@@ -152,10 +176,30 @@ function track(window) {
         });
     }
     window.frameGeometryChanged.connect((previous) => {
-        const current = window.frameGeometry;
-        if (!previous || previous.width !== current.width || previous.height !== current.height) {
-            place(entry);
+        if (entry.moving) {
+            return;
         }
+        const current = window.frameGeometry;
+        if (previous && previous.height !== current.height && Math.abs(previous.width - current.width) < 1) {
+            const ratio = ratioOf(window);
+            const bottom = previous.y + previous.height;
+            const next = {
+                x: snap(previous.x, ratio),
+                y: snap(bottom - current.height, ratio),
+                width: current.width,
+                height: current.height,
+            };
+            if (next.x !== current.x || next.y !== current.y) {
+                entry.moving = true;
+                try {
+                    window.frameGeometry = next;
+                } finally {
+                    entry.moving = false;
+                }
+            }
+            return;
+        }
+        place(entry);
     });
     window.closed.connect(() => windows.delete(window));
     onShow();
@@ -199,8 +243,21 @@ registerShortcut("Yoin Raise Settings", "Raise yoin settings", "", raiseSettings
 
 function arm(window) {
     consider(window);
+    if (isSettings(window)) {
+        snapTopLeft(window);
+    }
     if (window.captionChanged) {
         window.captionChanged.connect(() => consider(window));
+    }
+    if (isSettings(window)) {
+        const shown = window.windowShown || window.hiddenChanged;
+        if (shown) {
+            shown.connect(() => {
+                if (!window.hidden) {
+                    snapTopLeft(window);
+                }
+            });
+        }
     }
 }
 

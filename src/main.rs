@@ -59,6 +59,7 @@ struct Shell {
     popup: Option<Popup>,
     slide_timer: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
+    notice_timer: Option<Rc<slint::Timer>>,
 }
 
 struct Ctx {
@@ -146,6 +147,7 @@ fn main() {
             popup: None,
             slide_timer: None,
             raise_timer: None,
+            notice_timer: None,
         })),
         client_tx: client_tx.clone(),
         view: view.clone(),
@@ -222,14 +224,25 @@ fn main() {
                 }
                 ClientEv::Notify { title, message, image } => {
                     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                    let open = ctx_timer.app.borrow().popup_open;
                     {
                         let mut app = ctx_timer.app.borrow_mut();
-                        let dropped = notices::push(&mut app.notes, notices::Note { title: title.clone(), message: message.clone(), at, image: String::new() });
+                        let dropped = notices::push(&mut app.notes, notices::Note {
+                            title: title.clone(),
+                            message: message.clone(),
+                            at,
+                            image: String::new(),
+                            fade: if open { 0.0 } else { 1.0 },
+                            closing: false,
+                        });
                         notices::forget(&dropped);
                         notices::save(&app.notes);
                     }
                     if let Some(popup) = popup_of(&ctx_timer.shell) {
                         refresh_popup(&ctx_timer.app, &popup);
+                    }
+                    if open {
+                        kick_notice_anim(&ctx_timer);
                     }
                     let icon = icons::asset_path("icon.png");
                     let icon = icon.display().to_string();
@@ -562,6 +575,13 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
     settings.show().ok();
     lock_settings(settings);
+    let _ = settings.window().with_winit_window(|window| {
+        let scale = window.scale_factor() as f32;
+        if scale.is_finite() && scale > 0.0 {
+            let snapped = (theme::system_font().size_px * scale).round().max(1.0) / scale;
+            settings.set_ui_font_size(snapped);
+        }
+    });
     raise_settings(ctx, settings);
     let weak = settings.as_weak();
     let ctx_kick = ctx_from(ctx);
@@ -695,9 +715,73 @@ fn refresh_popup(app: &Rc<RefCell<App>>, popup: &Popup) {
             when: notices::ago(note.at, now, &language, &app.catalog).into(),
             has_image: loaded.is_some(),
             image: loaded.unwrap_or_default(),
+            fade: note.fade,
         }
     }).collect();
+    popup.set_notice_h(notice_block(&app.notes));
     popup.set_notices(ModelRc::new(VecModel::from(notices)));
+}
+
+fn notice_block(notes: &[notices::Note]) -> f32 {
+    let span: f32 = notes.iter().map(|note| note.fade.clamp(0.0, 1.0)).sum();
+    if span <= 0.001 {
+        return 0.0;
+    }
+    let rules = notes.len().saturating_sub(1) as f32;
+    16.0 + span * 62.0 + rules
+}
+
+fn kick_notice_anim(ctx: &Ctx) {
+    if ctx.shell.borrow().notice_timer.is_some() {
+        return;
+    }
+    let timer = Rc::new(slint::Timer::default());
+    let tick = timer.clone();
+    let ctx_tick = ctx_from(ctx);
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+        if !step_notices(&ctx_tick) {
+            tick.stop();
+            ctx_tick.shell.borrow_mut().notice_timer = None;
+        }
+    });
+    ctx.shell.borrow_mut().notice_timer = Some(timer);
+}
+
+fn step_notices(ctx: &Ctx) -> bool {
+    let open = ctx.app.borrow().popup_open;
+    let mut dropped = Vec::new();
+    let mut changed = false;
+    {
+        let mut app = ctx.app.borrow_mut();
+        let mut index = 0;
+        while index < app.notes.len() {
+            if app.notes[index].closing {
+                if !open || app.notes[index].fade <= 0.0 {
+                    dropped.push(app.notes.remove(index).image);
+                    changed = true;
+                    continue;
+                }
+                app.notes[index].fade = (app.notes[index].fade - 0.22).max(0.0);
+                changed = true;
+            } else if app.notes[index].fade < 1.0 {
+                app.notes[index].fade = if open { (app.notes[index].fade + 0.22).min(1.0) } else { 1.0 };
+                changed = true;
+            }
+            index += 1;
+        }
+        if !dropped.is_empty() {
+            notices::save(&app.notes);
+        }
+    }
+    if !dropped.is_empty() {
+        notices::forget(&dropped);
+    }
+    if changed {
+        if let Some(popup) = popup_of(&ctx.shell) {
+            refresh_popup(&ctx.app, &popup);
+        }
+    }
+    ctx.app.borrow().notes.iter().any(|note| note.closing || note.fade < 1.0)
 }
 
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -1059,23 +1143,18 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
             let _ = std::process::Command::new("xdg-open").arg(path).spawn();
         }
     });
-    let app_x = ctx.app.clone();
-    let shell_x = ctx.shell.clone();
+    let ctx_x = ctx_from(ctx);
     popup.on_dismiss_note(move |index| {
-        let removed = {
-            let mut app = app_x.borrow_mut();
-            let removed = notices::dismiss(&mut app.notes, index as usize);
-            if removed.is_some() {
-                notices::save(&app.notes);
+        let index = index as usize;
+        {
+            let mut app = ctx_x.app.borrow_mut();
+            let Some(note) = app.notes.get_mut(index) else { return };
+            if note.closing {
+                return;
             }
-            removed
-        };
-        if let Some(path) = removed {
-            notices::forget(std::slice::from_ref(&path));
-            if let Some(popup) = popup_of(&shell_x) {
-                refresh_popup(&app_x, &popup);
-            }
+            note.closing = true;
         }
+        kick_notice_anim(&ctx_x);
     });
 }
 

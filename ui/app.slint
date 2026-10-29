@@ -15,6 +15,7 @@ export struct Notice {
     when: string,
     image: image,
     has-image: bool,
+    fade: float,
 }
 
 export struct Choice {
@@ -347,13 +348,12 @@ export component Popup inherits Window {
         ? (tile-rows * tile + Math.max(tile-rows - 1, 0) * gap)
         : (Math.max(root.faces.length, 1) * (root.button-size + gap) - gap);
     in-out property <[Notice]> notices;
+    in-out property <length> notice-h: 0px;
     property <length> note-gap: 8px;
     property <length> note-row: 62px;
     property <length> note-rule: 1px;
-    property <bool> has-notes: root.notices.length > 0;
-    property <length> notes-h: root.has-notes
-        ? (root.pad * 2 + root.notices.length * root.note-row + Math.max(root.notices.length - 1, 0) * root.note-rule)
-        : 0px;
+    property <bool> has-notes: root.notice-h > 1px;
+    property <length> notes-h: root.notice-h;
     property <length> stack-gap: root.has-notes ? root.note-gap : 0px;
     property <length> card-h: root.pad + 32px + 4px + root.body-h + root.pad;
     out property <length> layout-width: root.width;
@@ -382,8 +382,9 @@ export component Popup inherits Window {
                     background: Breeze.frame;
                 }
                 Rectangle {
-                    height: root.note-row;
+                    height: root.note-row * Math.max(note.fade, 0);
                     width: 100%;
+                    opacity: Math.max(note.fade, 0);
                     background: transparent;
                     VerticalLayout {
                         x: 0px;

@@ -14,12 +14,14 @@ use crate::i18n::Catalog;
 
 pub const LIMIT: usize = 3;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Note {
     pub title: String,
     pub message: String,
     pub at: i64,
     pub image: String,
+    pub fade: f32,
+    pub closing: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -159,6 +161,8 @@ fn from_stored(row: Stored) -> Note {
         message: row.message,
         at: row.at,
         image: if image.is_file() { image.display().to_string() } else { String::new() },
+        fade: 1.0,
+        closing: false,
     }
 }
 
@@ -233,15 +237,17 @@ mod tests {
     #[test]
     fn fourth_notice_drops_the_oldest_picture() {
         let mut notes = Vec::new();
-        let mut dropped = Vec::new();
-        for n in 0..4 {
-            dropped.extend(push(&mut notes, Note {
-                title: n.to_string(),
-                message: String::new(),
-                at: n,
-                image: if n == 0 { "old.jpg".into() } else { String::new() },
-            }));
-        }
+            let mut dropped = Vec::new();
+            for n in 0..4 {
+                dropped.extend(push(&mut notes, Note {
+                    title: n.to_string(),
+                    message: String::new(),
+                    at: n,
+                    image: if n == 0 { "old.jpg".into() } else { String::new() },
+                    fade: 1.0,
+                    closing: false,
+                }));
+            }
         assert_eq!(notes.len(), 3);
         assert_eq!(notes[0].title, "1");
         assert_eq!(dropped, vec!["old.jpg".to_string()]);
@@ -250,8 +256,8 @@ mod tests {
     #[test]
     fn dismiss_removes_that_notice_only() {
         let mut notes = vec![
-            Note { title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into() },
-            Note { title: "b".into(), message: String::new(), at: 2, image: String::new() },
+            Note { title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into(), fade: 1.0, closing: false },
+            Note { title: "b".into(), message: String::new(), at: 2, image: String::new(), fade: 1.0, closing: false },
         ];
         assert_eq!(dismiss(&mut notes, 0).as_deref(), Some("a.jpg"));
         assert_eq!(notes.len(), 1);
