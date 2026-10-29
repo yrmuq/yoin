@@ -348,26 +348,9 @@ export component Popup inherits Window {
                     x: parent.width - 32px;
                     active: root.pinned;
                     clicked => { root.pin-toggled(); }
-                    if root.pinned: BreezeIcon {
+                    BreezeIcon {
                         source: @image-url("icons/window-pin.svg");
-                        ink: Breeze.selection-fg;
-                    }
-                    if !root.pinned: Rectangle {
-                        width: 22px;
-                        height: 22px;
-                        background: transparent;
-                        BreezeIcon {
-                            x: 0px;
-                            y: 0px;
-                            source: @image-url("icons/window-unpin.svg");
-                            ink: Breeze.fg;
-                        }
-                        BreezeIcon {
-                            x: 0px;
-                            y: 0px;
-                            source: @image-url("icons/window-unpin-slash.svg");
-                            ink: #da4453;
-                        }
+                        ink: pin-btn.active ? Breeze.selection-fg : Breeze.fg;
                     }
                 }
             }
