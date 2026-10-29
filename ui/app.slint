@@ -76,6 +76,8 @@ export component Popup inherits Window {
         Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
     }
     callback pressed(int);
+    out property <length> layout-width: root.width;
+    out property <length> layout-height: root.height;
     width: 280px;
     height: 10px + max(1, faces.length) * 42px;
     background: transparent;

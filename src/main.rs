@@ -11,15 +11,16 @@ mod place;
 mod theme;
 mod tray;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::fs::File;
 use std::os::fd::AsRawFd;
 use std::rc::Rc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use std::sync::{Arc, Mutex};
 
+use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, ModelRc, VecModel};
 
 use crate::client::{ClientCmd, ClientEv, Session};
@@ -41,6 +42,21 @@ struct App {
     popup_open: bool,
     placer_ok: bool,
     place_warned: bool,
+    status: String,
+}
+
+struct Shell {
+    settings: Option<Settings>,
+    popup: Option<Popup>,
+}
+
+struct Ctx {
+    app: Rc<RefCell<App>>,
+    shell: Rc<RefCell<Shell>>,
+    client_tx: tokio::sync::mpsc::UnboundedSender<ClientCmd>,
+    view: Arc<Mutex<TrayView>>,
+    tray: TrayHandle,
+    rt: tokio::runtime::Handle,
 }
 
 fn main() {
@@ -57,6 +73,9 @@ fn main() {
         eprintln!("yoin: graphics: {err}");
         return;
     }
+    // Wayland reports this as the window class. KWin uses it to keep the
+    // process out of the taskbar before the window is mapped.
+    let _ = slint::set_xdg_app_id("yoin");
     let mut cfg = config::load_config(&config::config_path());
     let folder = i18n::language_dir();
     if cfg.language.is_empty() {
@@ -70,11 +89,6 @@ fn main() {
         cfg.device_name = config::hostname();
     }
     let catalog = Catalog::load(&folder, &cfg.language);
-    let settings = Settings::new().unwrap();
-    let popup = Popup::new().unwrap();
-    let _ = settings.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
-    let _ = popup.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
-
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     let (tray_tx, mut tray_rx) = tokio::sync::mpsc::unbounded_channel();
     let (client_tx, client_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -95,81 +109,115 @@ fn main() {
             .expect("tray");
         (Arc::new(handle), placer_ok)
     });
-    let app = Rc::new(RefCell::new(App {
-        cfg,
-        catalog,
-        entities: HashMap::new(),
-        names: Vec::new(),
-        dark: false,
-        popup_open: false,
-        placer_ok,
-        place_warned: false,
-    }));
-    apply_theme(&app, &settings, &popup, &view, &tray_handle, &rt_handle);
-    fill_text(&app, &settings);
-    fill_rows(&app, &settings);
-    refresh_popup(&app, &popup);
-    wire(&app, &settings, &popup, &client_tx, &view, &tray_handle, &rt_handle);
-    if app.borrow().cfg.url.is_empty() || app.borrow().cfg.token.is_empty() {
+    let ctx = Rc::new(Ctx {
+        app: Rc::new(RefCell::new(App {
+            cfg,
+            catalog,
+            entities: HashMap::new(),
+            names: Vec::new(),
+            dark: false,
+            popup_open: false,
+            placer_ok,
+            place_warned: false,
+            status: String::new(),
+        })),
+        shell: Rc::new(RefCell::new(Shell { settings: None, popup: None })),
+        client_tx: client_tx.clone(),
+        view: view.clone(),
+        tray: tray_handle.clone(),
+        rt: rt_handle.clone(),
+    });
+    paint_theme(&ctx);
+    if ctx.app.borrow().cfg.autostart {
+        let _ = config::apply_autostart(true, &config::autostart_path());
+    }
+    if ctx.app.borrow().cfg.url.is_empty() || ctx.app.borrow().cfg.token.is_empty() {
+        let settings = ensure_settings(&ctx);
         settings.show().ok();
     } else {
-        start_client(&app, &client_tx);
+        start_client(&ctx.app, &ctx.client_tx);
     }
-    let ui_settings = settings.as_weak();
-    let ui_popup = popup.as_weak();
-    let app_timer = app.clone();
-    let view_timer = view.clone();
-    let tray_timer = tray_handle.clone();
-    let rt_timer = rt_handle.clone();
+    let ctx_timer = ctx.clone();
+    let last_toggle = Cell::new(None::<Instant>);
+    let mut sharpen_left = 0u8;
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(80), move || {
-        let Some(settings) = ui_settings.upgrade() else { return };
-        let Some(popup) = ui_popup.upgrade() else { return };
+        let mut toggles = 0u32;
         while let Ok(cmd) = tray_rx.try_recv() {
             match cmd {
-                TrayCmd::Settings => { settings.show().ok(); }
-                TrayCmd::Toggle => toggle_popup(&app_timer, &settings, &popup),
+                TrayCmd::Settings => {
+                    let settings = ensure_settings(&ctx_timer);
+                    settings.show().ok();
+                }
+                TrayCmd::Toggle => toggles += 1,
+            }
+        }
+        if toggles > 0 {
+            let now = Instant::now();
+            // Plasma can deliver one click as several Activate calls. An even
+            // count must still open the window, not cancel itself.
+            let allow = last_toggle.get().is_none_or(|at| now.duration_since(at) >= Duration::from_millis(300));
+            if allow {
+                last_toggle.set(Some(now));
+                if toggle_popup(&ctx_timer) {
+                    sharpen_left = 8;
+                }
             }
         }
         while let Ok(ev) = ev_rx.try_recv() {
             match ev {
-                ClientEv::Status(id) => settings.set_status(app_timer.borrow().catalog.tr(id).into()),
-                ClientEv::StatusText(text) => settings.set_status(text.into()),
+                ClientEv::Status(id) => note_status(&ctx_timer, ctx_timer.app.borrow().catalog.tr(id)),
+                ClientEv::StatusText(text) => note_status(&ctx_timer, text),
                 ClientEv::Registered(webhook) => {
-                    app_timer.borrow_mut().cfg.webhook_id = webhook;
-                    let _ = config::save_config(&app_timer.borrow().cfg, &config::config_path());
+                    ctx_timer.app.borrow_mut().cfg.webhook_id = webhook;
+                    let _ = config::save_config(&ctx_timer.app.borrow().cfg, &config::config_path());
                 }
                 ClientEv::Entities(list) => {
-                    app_timer.borrow_mut().entities = list.iter().map(|e| (e.entity_id.clone(), e.clone())).collect();
-                    app_timer.borrow_mut().names = list;
-                    fill_rows(&app_timer, &settings);
-                    refresh_popup(&app_timer, &popup);
+                    ctx_timer.app.borrow_mut().entities = list.iter().map(|e| (e.entity_id.clone(), e.clone())).collect();
+                    ctx_timer.app.borrow_mut().names = list;
+                    if let Some(settings) = settings_of(&ctx_timer.shell) {
+                        fill_rows(&ctx_timer.app, &settings);
+                    }
+                    if let Some(popup) = popup_of(&ctx_timer.shell) {
+                        refresh_popup(&ctx_timer.app, &popup);
+                    }
                 }
                 ClientEv::State(entity) => {
-                    app_timer.borrow_mut().entities.insert(entity.entity_id.clone(), entity.clone());
-                    if let Some(slot) = app_timer.borrow_mut().names.iter_mut().find(|item| item.entity_id == entity.entity_id) {
+                    ctx_timer.app.borrow_mut().entities.insert(entity.entity_id.clone(), entity.clone());
+                    if let Some(slot) = ctx_timer.app.borrow_mut().names.iter_mut().find(|item| item.entity_id == entity.entity_id) {
                         *slot = entity;
                     }
-                    refresh_popup(&app_timer, &popup);
+                    if let Some(popup) = popup_of(&ctx_timer.shell) {
+                        refresh_popup(&ctx_timer.app, &popup);
+                    }
                 }
                 ClientEv::Notify(title, message) => {
                     let icon = icons::asset_path("icon.png");
                     let icon = icon.display().to_string();
-                    rt_timer.spawn(async move {
+                    ctx_timer.rt.spawn(async move {
                         notify::announce(&title, &message, &icon).await;
                     });
                 }
                 ClientEv::Linked(up) => {
                     let id = if up { 22 } else { 24 };
-                    settings.set_status(app_timer.borrow().catalog.tr(id).into());
+                    let text = ctx_timer.app.borrow().catalog.tr(id);
+                    note_status(&ctx_timer, text);
                 }
             }
         }
-        if app_timer.borrow().cfg.theme == "system" {
+        if ctx_timer.app.borrow().cfg.theme == "system" {
             let dark = theme::system_dark();
-            if dark != app_timer.borrow().dark {
-                apply_theme(&app_timer, &settings, &popup, &view_timer, &tray_timer, &rt_timer);
+            if dark != ctx_timer.app.borrow().dark {
+                paint_theme(&ctx_timer);
             }
+        }
+        if sharpen_left > 0 {
+            if ctx_timer.app.borrow().popup_open {
+                if let Some(popup) = popup_of(&ctx_timer.shell) {
+                    sharpen_popup(&popup);
+                }
+            }
+            sharpen_left -= 1;
         }
     });
     // ksni is not a Slint tray icon, so an idle popup must not end the process.
@@ -198,19 +246,125 @@ fn start_client(app: &Rc<RefCell<App>>, tx: &tokio::sync::mpsc::UnboundedSender<
     }));
 }
 
-fn toggle_popup(app: &Rc<RefCell<App>>, settings: &Settings, popup: &Popup) {
-    if app.borrow().popup_open {
+fn settings_of(shell: &RefCell<Shell>) -> Option<Settings> {
+    shell.borrow().settings.as_ref().map(Settings::clone_strong)
+}
+
+fn popup_of(shell: &RefCell<Shell>) -> Option<Popup> {
+    shell.borrow().popup.as_ref().map(Popup::clone_strong)
+}
+
+fn note_status(ctx: &Ctx, text: String) {
+    ctx.app.borrow_mut().status = text.clone();
+    if let Some(settings) = settings_of(&ctx.shell) {
+        settings.set_status(text.into());
+    }
+}
+
+fn paint_theme(ctx: &Ctx) {
+    let settings = settings_of(&ctx.shell);
+    let popup = popup_of(&ctx.shell);
+    apply_theme(&ctx.app, settings.as_ref(), popup.as_ref(), &ctx.view, &ctx.tray, &ctx.rt);
+}
+
+fn ensure_settings(ctx: &Ctx) -> Settings {
+    if let Some(settings) = settings_of(&ctx.shell) {
+        return settings;
+    }
+    let settings = Settings::new().unwrap();
+    let _ = settings.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    ctx.shell.borrow_mut().settings = Some(settings.clone_strong());
+    paint_theme(ctx);
+    fill_text(&ctx.app, &settings);
+    fill_rows(&ctx.app, &settings);
+    if !ctx.app.borrow().status.is_empty() {
+        settings.set_status(ctx.app.borrow().status.clone().into());
+    }
+    wire_settings(ctx, &settings);
+    settings
+}
+
+fn ensure_popup(ctx: &Ctx) -> Popup {
+    if let Some(popup) = popup_of(&ctx.shell) {
+        return popup;
+    }
+    let popup = Popup::new().unwrap();
+    let _ = popup.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    let weak = popup.as_weak();
+    let _ = popup.window().on_winit_window_event(move |_window, event| {
+        if matches!(event, winit::event::WindowEvent::ScaleFactorChanged { .. }) {
+            if let Some(popup) = weak.upgrade() {
+                let _ = sharpen_popup(&popup);
+            }
+        }
+        EventResult::Propagate
+    });
+    ctx.shell.borrow_mut().popup = Some(popup.clone_strong());
+    paint_theme(ctx);
+    refresh_popup(&ctx.app, &popup);
+    wire_popup(ctx, &popup);
+    popup
+}
+
+fn ctx_from(ctx: &Ctx) -> Ctx {
+    Ctx {
+        app: ctx.app.clone(),
+        shell: ctx.shell.clone(),
+        client_tx: ctx.client_tx.clone(),
+        view: ctx.view.clone(),
+        tray: ctx.tray.clone(),
+        rt: ctx.rt.clone(),
+    }
+}
+
+fn sharpen_popup(popup: &Popup) -> bool {
+    let width = popup.get_layout_width();
+    let height = popup.get_layout_height();
+    if width < 2.0 || height < 2.0 {
+        return false;
+    }
+    let pending = popup.window().with_winit_window(|window| {
+        let scale = window.scale_factor();
+        if !scale.is_finite() || scale <= 0.0 {
+            return true;
+        }
+        let snapped = (theme::system_font().size_px * scale as f32).round().max(1.0) / scale as f32;
+        if (popup.get_ui_font_size() - snapped).abs() > 0.05 {
+            popup.set_ui_font_size(snapped);
+        }
+        let physical = window.inner_size();
+        let want_w = (width as f64 * scale).round() as u32;
+        let want_h = (height as f64 * scale).round() as u32;
+        // The Wayland window is often created before the scale arrives, so the
+        // buffer stays at 1x and the compositor stretches it. Asking again in
+        // logical pixels reallocates the buffer at the real scale.
+        if physical.width.abs_diff(want_w) > 1 || physical.height.abs_diff(want_h) > 1 {
+            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width as f64, height as f64));
+            return true;
+        }
+        false
+    }).unwrap_or(true);
+    popup.window().request_redraw();
+    pending
+}
+
+fn toggle_popup(ctx: &Ctx) -> bool {
+    let popup = ensure_popup(ctx);
+    if ctx.app.borrow().popup_open {
         popup.hide().ok();
-        app.borrow_mut().popup_open = false;
-        return;
+        ctx.app.borrow_mut().popup_open = false;
+        return false;
     }
-    refresh_popup(app, popup);
+    refresh_popup(&ctx.app, &popup);
     popup.show().ok();
-    app.borrow_mut().popup_open = true;
-    if !app.borrow().placer_ok && !app.borrow().place_warned {
-        app.borrow_mut().place_warned = true;
-        settings.set_status(app.borrow().catalog.tr(23).into());
+    let _ = popup.window().with_winit_window(|window| window.set_title("yoin-buttons"));
+    let _ = sharpen_popup(&popup);
+    ctx.app.borrow_mut().popup_open = true;
+    if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
+        ctx.app.borrow_mut().place_warned = true;
+        note_status(ctx, ctx.app.borrow().catalog.tr(23));
     }
+    true
 }
 
 fn refresh_popup(app: &Rc<RefCell<App>>, popup: &Popup) {
@@ -283,24 +437,28 @@ fn fill_rows(app: &Rc<RefCell<App>>, settings: &Settings) {
 
 fn apply_theme(
     app: &Rc<RefCell<App>>,
-    settings: &Settings,
-    popup: &Popup,
+    settings: Option<&Settings>,
+    popup: Option<&Popup>,
     view: &Arc<Mutex<TrayView>>,
     tray: &TrayHandle,
     rt: &tokio::runtime::Handle,
 ) {
     let dark = theme::resolved(&app.borrow().cfg.theme, theme::system_dark()) == "dark";
     app.borrow_mut().dark = dark;
-    settings.set_dark(dark);
-    popup.set_dark(dark);
     let font = theme::system_font();
     let family = slint::SharedString::from(font.family);
-    settings.set_ui_font_family(family.clone());
-    popup.set_ui_font_family(family);
-    settings.set_ui_font_size(font.size_px);
-    popup.set_ui_font_size(font.size_px);
-    settings.set_ui_font_weight(font.weight);
-    popup.set_ui_font_weight(font.weight);
+    if let Some(settings) = settings {
+        settings.set_dark(dark);
+        settings.set_ui_font_family(family.clone());
+        settings.set_ui_font_size(font.size_px);
+        settings.set_ui_font_weight(font.weight);
+    }
+    if let Some(popup) = popup {
+        popup.set_dark(dark);
+        popup.set_ui_font_family(family);
+        popup.set_ui_font_size(font.size_px);
+        popup.set_ui_font_weight(font.weight);
+    }
     let file = if dark { "tray-light.png" } else { "tray-dark.png" };
     let mut path = icons::asset_path(file);
     if !path.is_file() {
@@ -314,25 +472,17 @@ fn apply_theme(
     }
 }
 
-fn wire(
-    app: &Rc<RefCell<App>>,
-    settings: &Settings,
-    popup: &Popup,
-    client_tx: &tokio::sync::mpsc::UnboundedSender<ClientCmd>,
-    view: &Arc<Mutex<TrayView>>,
-    tray: &TrayHandle,
-    rt: &tokio::runtime::Handle,
-) {
-    let app_c = app.clone();
-    let tx = client_tx.clone();
+fn wire_settings(ctx: &Ctx, settings: &Settings) {
+    let app_c = ctx.app.clone();
+    let tx = ctx.client_tx.clone();
     let settings_c = settings.as_weak();
     settings.on_connect(move || {
         if let Some(settings) = settings_c.upgrade() {
             store(&app_c, &settings, &tx, false);
         }
     });
-    let app_s = app.clone();
-    let tx = client_tx.clone();
+    let app_s = ctx.app.clone();
+    let tx = ctx.client_tx.clone();
     let settings_s = settings.as_weak();
     settings.on_save(move || {
         if let Some(settings) = settings_s.upgrade() {
@@ -341,23 +491,9 @@ fn wire(
             }
         }
     });
-    let app_p = app.clone();
-    let tx = client_tx.clone();
-    let settings_p = settings.as_weak();
-    popup.on_pressed(move |index| {
-        let entity = app_p.borrow().cfg.buttons.get(index as usize).cloned().unwrap_or_default();
-        if entity.is_empty() {
-            if let Some(settings) = settings_p.upgrade() {
-                settings.show().ok();
-            }
-            return;
-        }
-        let state = app_p.borrow().entities.get(&entity).map(|e| e.state.clone()).unwrap_or_default();
-        let _ = tx.send(ClientCmd::Call { entity, state });
-    });
-    let app_a = app.clone();
+    let app_a = ctx.app.clone();
+    let shell_a = ctx.shell.clone();
     let settings_a = settings.as_weak();
-    let popup_a = popup.as_weak();
     settings.on_add(move || {
         if app_a.borrow().cfg.buttons.len() >= config::MAX_BUTTONS {
             return;
@@ -367,15 +503,15 @@ fn wire(
         if let Some(settings) = settings_a.upgrade() {
             fill_rows(&app_a, &settings);
         }
-        if let Some(popup) = popup_a.upgrade() {
+        if let Some(popup) = popup_of(&shell_a) {
             refresh_popup(&app_a, &popup);
         }
     });
-    bind_move(app, settings, popup, true);
-    bind_move(app, settings, popup, false);
-    let app_r = app.clone();
+    bind_move(&ctx.app, &ctx.shell, settings, true);
+    bind_move(&ctx.app, &ctx.shell, settings, false);
+    let app_r = ctx.app.clone();
+    let shell_r = ctx.shell.clone();
     let settings_r = settings.as_weak();
-    let popup_r = popup.as_weak();
     settings.on_remove(move |index| {
         let mut cfg_app = app_r.borrow_mut();
         if cfg_app.cfg.buttons.len() <= 1 {
@@ -390,13 +526,13 @@ fn wire(
         if let Some(settings) = settings_r.upgrade() {
             fill_rows(&app_r, &settings);
         }
-        if let Some(popup) = popup_r.upgrade() {
+        if let Some(popup) = popup_of(&shell_r) {
             refresh_popup(&app_r, &popup);
         }
     });
-    let app_k = app.clone();
+    let app_k = ctx.app.clone();
+    let shell_k = ctx.shell.clone();
     let settings_k = settings.as_weak();
-    let popup_k = popup.as_weak();
     settings.on_pick(move |row, index| {
         let mut borrowed = app_k.borrow_mut();
         let row = row as usize;
@@ -414,18 +550,18 @@ fn wire(
         borrowed.cfg.buttons[row] = id;
         drop(borrowed);
         let _ = config::save_config(&app_k.borrow().cfg, &config::config_path());
-        if let Some(popup) = popup_k.upgrade() {
+        if let Some(popup) = popup_of(&shell_k) {
             refresh_popup(&app_k, &popup);
         }
         if let Some(settings) = settings_k.upgrade() {
             fill_rows(&app_k, &settings);
         }
     });
-    let app_l = app.clone();
+    let app_l = ctx.app.clone();
     let settings_l = settings.as_weak();
-    let view_l = view.clone();
-    let tray_l = tray.clone();
-    let rt_l = rt.clone();
+    let view_l = ctx.view.clone();
+    let tray_l = ctx.tray.clone();
+    let rt_l = ctx.rt.clone();
     settings.on_language(move |index| {
         let names = i18n::languages(&i18n::language_dir());
         let Some(name) = names.get(index as usize) else { return };
@@ -445,33 +581,42 @@ fn wire(
             fill_rows(&app_l, &settings);
         }
     });
-    let app_t = app.clone();
-    let settings_t = settings.as_weak();
-    let popup_t = popup.as_weak();
-    let view_t = view.clone();
-    let tray_t = tray.clone();
-    let rt_t = rt.clone();
+    let ctx_t = ctx_from(ctx);
     settings.on_theme(move |index| {
         let theme = match index {
             1 => "light",
             2 => "dark",
             _ => "system",
         };
-        if app_t.borrow().cfg.theme == theme {
+        if ctx_t.app.borrow().cfg.theme == theme {
             return;
         }
-        app_t.borrow_mut().cfg.theme = theme.into();
-        let _ = config::save_config(&app_t.borrow().cfg, &config::config_path());
-        if let (Some(settings), Some(popup)) = (settings_t.upgrade(), popup_t.upgrade()) {
-            apply_theme(&app_t, &settings, &popup, &view_t, &tray_t, &rt_t);
-        }
+        ctx_t.app.borrow_mut().cfg.theme = theme.into();
+        let _ = config::save_config(&ctx_t.app.borrow().cfg, &config::config_path());
+        paint_theme(&ctx_t);
     });
 }
 
-fn bind_move(app: &Rc<RefCell<App>>, settings: &Settings, popup: &Popup, up: bool) {
+fn wire_popup(ctx: &Ctx, popup: &Popup) {
+    let app_p = ctx.app.clone();
+    let tx = ctx.client_tx.clone();
+    let ctx_p = ctx_from(ctx);
+    popup.on_pressed(move |index| {
+        let entity = app_p.borrow().cfg.buttons.get(index as usize).cloned().unwrap_or_default();
+        if entity.is_empty() {
+            let settings = ensure_settings(&ctx_p);
+            settings.show().ok();
+            return;
+        }
+        let state = app_p.borrow().entities.get(&entity).map(|e| e.state.clone()).unwrap_or_default();
+        let _ = tx.send(ClientCmd::Call { entity, state });
+    });
+}
+
+fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Settings, up: bool) {
     let app = app.clone();
+    let shell = shell.clone();
     let settings_w = settings.as_weak();
-    let popup_w = popup.as_weak();
     let go = move |index: i32| {
         let index = index as usize;
         let mut borrowed = app.borrow_mut();
@@ -491,7 +636,7 @@ fn bind_move(app: &Rc<RefCell<App>>, settings: &Settings, popup: &Popup, up: boo
         if let Some(settings) = settings_w.upgrade() {
             fill_rows(&app, &settings);
         }
-        if let Some(popup) = popup_w.upgrade() {
+        if let Some(popup) = popup_of(&shell) {
             refresh_popup(&app, &popup);
         }
     };

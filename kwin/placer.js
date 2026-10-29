@@ -2,8 +2,25 @@ const GAP = 8;
 const windows = new Map();
 let lastAnchor = null;
 
-function isYoin(window) {
-    return window.caption === "yoin-buttons" && !window.dialog;
+function textOf(value) {
+    return value == null ? "" : String(value);
+}
+
+function isOurs(window) {
+    const caption = textOf(window.caption);
+    const klass = textOf(window.resourceClass);
+    const name = textOf(window.resourceName);
+    return caption === "yoin" || caption === "yoin-buttons" || klass === "yoin" || name === "yoin";
+}
+
+function isPopup(window) {
+    return textOf(window.caption) === "yoin-buttons" && !window.dialog;
+}
+
+function hideFromTaskbar(window) {
+    window.skipTaskbar = true;
+    window.skipSwitcher = true;
+    window.skipPager = true;
 }
 
 function contains(rect, point) {
@@ -122,12 +139,10 @@ function place(entry) {
 }
 
 function track(window) {
-    if (!isYoin(window) || windows.has(window)) {
+    if (!isPopup(window) || windows.has(window)) {
         return;
     }
-    window.skipTaskbar = true;
-    window.skipSwitcher = true;
-    window.skipPager = true;
+    hideFromTaskbar(window);
     window.keepAbove = true;
     const entry = { window: window, anchor: null, moving: false };
     windows.set(window, entry);
@@ -153,5 +168,21 @@ function track(window) {
     onShow();
 }
 
-workspace.windowAdded.connect(track);
-workspace.windowList().forEach(track);
+function consider(window) {
+    if (isOurs(window)) {
+        hideFromTaskbar(window);
+    }
+    if (isPopup(window)) {
+        track(window);
+    }
+}
+
+function arm(window) {
+    consider(window);
+    if (window.captionChanged) {
+        window.captionChanged.connect(() => consider(window));
+    }
+}
+
+workspace.windowAdded.connect(arm);
+workspace.windowList().forEach(arm);

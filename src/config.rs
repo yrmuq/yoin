@@ -151,7 +151,7 @@ pub fn apply_autostart(enabled: bool, path: &Path) -> std::io::Result<()> {
         fs::create_dir_all(parent)?;
     }
     let text = format!(
-        "[Desktop Entry]\nType=Application\nName=yoin\nComment=Home Assistant buttons in the KDE tray\nExec={}\nIcon=yoin\nTerminal=false\nCategories=Utility;\nX-KDE-autostart-after=panel\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=yoin\nComment=Home Assistant buttons in the KDE tray\nExec={}\nIcon=yoin\nTerminal=false\nCategories=Utility;\nStartupNotify=false\nX-KDE-StartupNotify=false\nX-KDE-autostart-after=panel\nX-GNOME-Autostart-enabled=true\n",
         format_exec(&launch_args())
     );
     fs::write(path, text)?;
