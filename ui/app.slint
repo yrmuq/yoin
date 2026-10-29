@@ -292,37 +292,38 @@ component TileButton inherits Rectangle {
     border-color: on || hovered ? Breeze.outline : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
     property <length> icon-side: Math.max(16px, root.side * 0.32);
-    VerticalLayout {
-        alignment: center;
-        spacing: 4px;
-        padding: 6px;
-        HorizontalLayout {
-            alignment: center;
-            width: 100%;
-            if root.has-icon: BreezeIcon {
-                source: root.icon;
-                tint: root.tint;
-                ink: root.on ? Breeze.selection-fg : Breeze.fg;
-                width: root.icon-side;
-                height: root.icon-side;
-            }
-            if !root.has-icon: KindIcon {
-                kind: root.kind;
-                ink: root.on ? Breeze.selection-fg : Breeze.fg;
-                width: root.icon-side;
-                height: root.icon-side;
-            }
+    clip: true;
+    Rectangle {
+        x: (parent.width - root.icon-side) / 2;
+        y: (parent.height - root.icon-side) / 2;
+        width: root.icon-side;
+        height: root.icon-side;
+        background: transparent;
+        if root.has-icon: BreezeIcon {
+            source: root.icon;
+            tint: root.tint;
+            ink: root.on ? Breeze.selection-fg : Breeze.fg;
+            width: parent.width;
+            height: parent.height;
         }
-        Label {
-            text: root.label;
-            color: root.on ? Breeze.selection-fg : Breeze.fg;
-            wrap: word-wrap;
-            overflow: elide;
-            width: 100%;
-            horizontal-alignment: center;
-            font-size: Math.max(9px, root.side * 0.15);
-            height: root.side * 0.34;
+        if !root.has-icon: KindIcon {
+            kind: root.kind;
+            ink: root.on ? Breeze.selection-fg : Breeze.fg;
+            width: parent.width;
+            height: parent.height;
         }
+    }
+    caption := Label {
+        x: 6px;
+        y: (parent.height + root.icon-side) / 2 + 4px;
+        text: root.label;
+        color: root.on ? Breeze.selection-fg : Breeze.fg;
+        wrap: word-wrap;
+        overflow: elide;
+        width: parent.width - 12px;
+        horizontal-alignment: center;
+        font-size: Math.max(9px, root.side * 0.15);
+        height: Math.max(0px, Math.min(root.side * 0.34, parent.height - caption.y));
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -354,12 +355,18 @@ export component Popup inherits Window {
     callback configure();
     callback open-home();
     callback pin-toggled();
+    callback notices-toggled();
     in-out property <image> icon-open: @image-url("icons/open-link.svg");
     in-out property <image> icon-configure: @image-url("icons/configure.svg");
     in-out property <image> icon-pin: @image-url("icons/window-pin.svg");
+    in-out property <image> icon-arrow-up: @image-url("icons/arrow-up.svg");
+    in-out property <image> icon-arrow-down: @image-url("icons/arrow-down.svg");
     in-out property <bool> tint-open: true;
     in-out property <bool> tint-configure: true;
     in-out property <bool> tint-pin: true;
+    in-out property <bool> tint-arrow-up: true;
+    in-out property <bool> tint-arrow-down: true;
+    in-out property <bool> notices-hidden: false;
     property <length> gap: 6px;
     property <length> pad: 8px;
     property <length> tile: root.button-size * 2.05;
@@ -394,6 +401,15 @@ export component Popup inherits Window {
                     x: 0px;
                     clicked => { root.open-home(); }
                     BreezeIcon { source: root.icon-open; tint: root.tint-open; ink: Breeze.fg; }
+                }
+                ToolButton {
+                    x: (parent.width - 32px) / 2;
+                    clicked => { root.notices-toggled(); }
+                    BreezeIcon {
+                        source: root.notices-hidden ? root.icon-arrow-up : root.icon-arrow-down;
+                        tint: root.notices-hidden ? root.tint-arrow-up : root.tint-arrow-down;
+                        ink: Breeze.fg;
+                    }
                 }
                 ToolButton {
                     x: parent.width - 68px;
@@ -500,8 +516,8 @@ export component Notices inherits Window {
                     border-width: 1px;
                     border-color: Breeze.frame;
                     VerticalLayout {
-                        x: 0px;
-                        width: parent.width * 0.75 - 8px;
+                        x: root.pad;
+                        width: parent.width * 0.75 - root.pad * 2;
                         height: parent.height;
                         alignment: center;
                         spacing: 0px;

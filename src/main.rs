@@ -691,6 +691,14 @@ fn apply_header_icons(popup: &Popup) {
         popup.set_icon_pin(icon.image);
         popup.set_tint_pin(icon.tint);
     }
+    if let Some(icon) = icons::theme_icon("arrow-up") {
+        popup.set_icon_arrow_up(icon.image);
+        popup.set_tint_arrow_up(icon.tint);
+    }
+    if let Some(icon) = icons::theme_icon("arrow-down") {
+        popup.set_icon_arrow_down(icon.image);
+        popup.set_tint_arrow_down(icon.tint);
+    }
 }
 
 fn raise_settings(ctx: &Ctx, settings: &Settings) {
@@ -759,7 +767,7 @@ fn toggle_popup(ctx: &Ctx) -> bool {
 
 fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
     let Some(popup) = popup_of(shell) else { return };
-    let (faces, tiles, button_size, pinned) = {
+    let (faces, tiles, button_size, pinned, notices_hidden) = {
         let app = app.borrow();
         let unset = app.catalog.tr(12);
         let tiles = app.cfg.layout == "tiles";
@@ -778,11 +786,12 @@ fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
                 icon: icon.map(|icon| icon.image).unwrap_or_default(),
             }
         }).collect();
-        (faces, tiles, app.cfg.button_size as f32, app.pinned)
+        (faces, tiles, app.cfg.button_size as f32, app.pinned, app.cfg.notices_hidden)
     };
     popup.set_tiles(tiles);
     popup.set_button_size(button_size);
     popup.set_pinned(pinned);
+    popup.set_notices_hidden(notices_hidden);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
     sync_notices(app, shell);
 }
@@ -812,7 +821,7 @@ fn sync_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
             }
         }).collect();
         let notice_h = notice_block(&app.notes);
-        let show_notes = app.popup_open && notice_h > 1.0;
+        let show_notes = app.popup_open && !app.cfg.notices_hidden && notice_h > 1.0;
         (rows, notice_h, show_notes)
     };
     let revealed = present_notices(app, shell, &popup, rows, notice_h, show_notes);
@@ -1378,6 +1387,15 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
         if let Some(popup) = popup_of(&ctx_pin.shell) {
             popup.set_pinned(next);
         }
+    });
+    let ctx_notes = ctx_from(ctx);
+    popup.on_notices_toggled(move || {
+        {
+            let mut app = ctx_notes.app.borrow_mut();
+            app.cfg.notices_hidden = !app.cfg.notices_hidden;
+            let _ = config::save_config(&app.cfg, &config::config_path());
+        }
+        refresh_popup(&ctx_notes.app, &ctx_notes.shell);
     });
 }
 

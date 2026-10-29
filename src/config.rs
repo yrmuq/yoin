@@ -26,6 +26,7 @@ pub struct Config {
     pub theme: String,
     pub layout: String,
     pub button_size: u32,
+    pub notices_hidden: bool,
 }
 
 impl Default for Config {
@@ -43,6 +44,7 @@ impl Default for Config {
             theme: "system".into(),
             layout: "list".into(),
             button_size: 40,
+            notices_hidden: false,
         }
     }
 }
@@ -201,6 +203,7 @@ mod tests {
         assert!(!cfg.autostart);
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 40);
+        assert!(!cfg.notices_hidden);
         assert_eq!(cfg.labels, vec![String::new()]);
     }
 
