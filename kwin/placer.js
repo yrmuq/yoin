@@ -36,7 +36,9 @@ function stickNotice(notice, popup) {
     }
     const ratio = ratioOf(notice);
     const x = snap(pf.x, ratio);
-    const y = snap(pf.y - nf.height - GAP, ratio);
+    // The last notice keeps 8px of padding under it, so the frames touch and
+    // the empty space between the two windows is half of what it was.
+    const y = snap(pf.y - nf.height, ratio);
     if (Math.abs(nf.x - x) < 0.5 && Math.abs(nf.y - y) < 0.5) {
         return;
     }
