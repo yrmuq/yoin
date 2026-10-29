@@ -10,6 +10,52 @@ function isPopup(window) {
     return textOf(window.caption) === "yoin-buttons" && !window.dialog;
 }
 
+function isNotice(window) {
+    return textOf(window.caption) === "yoin-notices" && !window.dialog;
+}
+
+function findPopup() {
+    const list = workspace.windowList();
+    for (let i = 0; i < list.length; i++) {
+        const window = list[i];
+        if (isPopup(window) && !window.deleted && !window.hidden) {
+            return window;
+        }
+    }
+    return null;
+}
+
+function stickNotice(notice, popup) {
+    if (!notice || !popup || notice.deleted || notice.hidden || popup.deleted || popup.hidden) {
+        return;
+    }
+    const pf = popup.frameGeometry;
+    const nf = notice.frameGeometry;
+    if (nf.width <= 0 || nf.height <= 0 || pf.width <= 0) {
+        return;
+    }
+    const ratio = ratioOf(notice);
+    const x = snap(pf.x, ratio);
+    const y = snap(pf.y - nf.height - GAP, ratio);
+    if (Math.abs(nf.x - x) < 0.5 && Math.abs(nf.y - y) < 0.5) {
+        return;
+    }
+    notice.frameGeometry = { x: x, y: y, width: nf.width, height: nf.height };
+}
+
+function repositionNotices() {
+    const popup = findPopup();
+    if (!popup) {
+        return;
+    }
+    const list = workspace.windowList();
+    for (let i = 0; i < list.length; i++) {
+        if (isNotice(list[i])) {
+            stickNotice(list[i], popup);
+        }
+    }
+}
+
 function hideFromTaskbar(window) {
     window.skipTaskbar = true;
     window.skipSwitcher = true;
@@ -44,17 +90,6 @@ function ratioOf(window) {
 
 function snap(value, ratio) {
     return Math.round(value * ratio) / ratio;
-}
-
-function snapTopLeft(window) {
-    const ratio = ratioOf(window);
-    const frame = window.frameGeometry;
-    const x = snap(frame.x, ratio);
-    const y = snap(frame.y, ratio);
-    if (x === frame.x && y === frame.y) {
-        return;
-    }
-    window.frameGeometry = { x: x, y: y, width: frame.width, height: frame.height };
 }
 
 function placement(size, area, anchor) {
@@ -153,6 +188,7 @@ function place(entry) {
     } finally {
         entry.moving = false;
     }
+    repositionNotices();
 }
 
 function track(window) {
@@ -197,6 +233,7 @@ function track(window) {
                     entry.moving = false;
                 }
             }
+            repositionNotices();
             return;
         }
         place(entry);
@@ -209,6 +246,11 @@ function consider(window) {
     if (isPopup(window)) {
         hideFromTaskbar(window);
         track(window);
+        return;
+    }
+    if (isNotice(window)) {
+        hideFromTaskbar(window);
+        trackNotice(window);
         return;
     }
     if (isSettings(window)) {
@@ -241,23 +283,44 @@ function raiseSettings() {
 
 registerShortcut("Yoin Raise Settings", "Raise yoin settings", "", raiseSettings);
 
+const trackedNotices = new Map();
+
+function trackNotice(window) {
+    if (!isNotice(window) || trackedNotices.has(window)) {
+        return;
+    }
+    hideFromTaskbar(window);
+    window.keepAbove = true;
+    const entry = { moving: false };
+    trackedNotices.set(window, entry);
+    const visibilityChanged = window.windowShown || window.hiddenChanged;
+    if (visibilityChanged) {
+        visibilityChanged.connect(() => {
+            if (!window.hidden) {
+                repositionNotices();
+            }
+        });
+    }
+    window.frameGeometryChanged.connect(() => {
+        if (entry.moving) {
+            return;
+        }
+        const popup = findPopup();
+        entry.moving = true;
+        try {
+            stickNotice(window, popup);
+        } finally {
+            entry.moving = false;
+        }
+    });
+    window.closed.connect(() => trackedNotices.delete(window));
+    repositionNotices();
+}
+
 function arm(window) {
     consider(window);
-    if (isSettings(window)) {
-        snapTopLeft(window);
-    }
     if (window.captionChanged) {
         window.captionChanged.connect(() => consider(window));
-    }
-    if (isSettings(window)) {
-        const shown = window.windowShown || window.hiddenChanged;
-        if (shown) {
-            shown.connect(() => {
-                if (!window.hidden) {
-                    snapTopLeft(window);
-                }
-            });
-        }
     }
 }
 

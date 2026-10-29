@@ -57,8 +57,8 @@ skippager=true
 skippagerrule=2
 skipswitcher=true
 skipswitcherrule=2
-title=yoin-buttons
-titlematch=1
+title=yoin-(buttons|notices)
+titlematch=3
 wmclass=yoin
 wmclassmatch=1
 wmclasscomplete=false
@@ -107,7 +107,7 @@ fn rewrite_tray_rule(text: &str) -> String {
 }
 fn merge_kwin_rules(text: &str) -> Option<String> {
     if text.contains("[yoin-tray]") {
-        if text.contains("title=yoin-buttons\n") {
+        if text.contains("title=yoin-(buttons|notices)\n") && text.contains("titlematch=3\n") {
             return None;
         }
         return Some(rewrite_tray_rule(text));
@@ -177,13 +177,19 @@ mod tests {
         assert!(first.contains("rules=1,yoin-tray\n"));
         assert!(first.contains("count=2\n"));
         assert!(first.contains("skiptaskbar=true\n"));
-        assert!(first.contains("title=yoin-buttons\n"));
+        assert!(first.contains("title=yoin-(buttons|notices)\n"));
+        assert!(first.contains("titlematch=3\n"));
         assert!(merge_kwin_rules(&first).is_none());
         let stale = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin\nskiptaskbar=true\n";
         let updated = merge_kwin_rules(stale).unwrap();
-        assert!(updated.contains("title=yoin-buttons\n"));
+        assert!(updated.contains("title=yoin-(buttons|notices)\n"));
         assert!(!updated.contains("Description=yoin tray windows\n"));
         assert!(merge_kwin_rules(&updated).is_none());
+        let old = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nDescription=yoin tray popup\ntitle=yoin-buttons\ntitlematch=1\nwmclass=yoin\n";
+        let fixed = merge_kwin_rules(old).unwrap();
+        assert!(fixed.contains("title=yoin-(buttons|notices)\n"));
+        assert!(!fixed.contains("title=yoin-buttons\n"));
+        assert!(merge_kwin_rules(&fixed).is_none());
         let empty = merge_kwin_rules("").unwrap();
         assert!(empty.contains("[yoin-tray]\n"));
         assert!(empty.contains("rules=yoin-tray\n"));

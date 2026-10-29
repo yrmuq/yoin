@@ -45,6 +45,7 @@ struct App {
     popup_focused: bool,
     popup_seen_focus: bool,
     close_popup: bool,
+    blur_at: Instant,
     pinned: bool,
     editing: Option<usize>,
     popup_at: Instant,
@@ -60,6 +61,7 @@ struct Shell {
     slide_timer: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
     notice_timer: Option<Rc<slint::Timer>>,
+    notices: Option<Notices>,
 }
 
 struct Ctx {
@@ -134,6 +136,7 @@ fn main() {
             popup_focused: false,
             popup_seen_focus: false,
             close_popup: false,
+            blur_at: Instant::now(),
             pinned: false,
             editing: None,
             popup_at: Instant::now(),
@@ -148,6 +151,7 @@ fn main() {
             slide_timer: None,
             raise_timer: None,
             notice_timer: None,
+            notices: None,
         })),
         client_tx: client_tx.clone(),
         view: view.clone(),
@@ -209,8 +213,8 @@ fn main() {
                     if let Some(settings) = settings_of(&ctx_timer.shell) {
                         fill_rows(&ctx_timer.app, &settings);
                     }
-                    if let Some(popup) = popup_of(&ctx_timer.shell) {
-                        refresh_popup(&ctx_timer.app, &popup);
+                    if let Some(_popup) = popup_of(&ctx_timer.shell) {
+                        refresh_popup(&ctx_timer.app, &ctx_timer.shell);
                     }
                 }
                 ClientEv::State(entity) => {
@@ -218,8 +222,8 @@ fn main() {
                     if let Some(slot) = ctx_timer.app.borrow_mut().names.iter_mut().find(|item| item.entity_id == entity.entity_id) {
                         *slot = entity;
                     }
-                    if let Some(popup) = popup_of(&ctx_timer.shell) {
-                        refresh_popup(&ctx_timer.app, &popup);
+                    if let Some(_popup) = popup_of(&ctx_timer.shell) {
+                        refresh_popup(&ctx_timer.app, &ctx_timer.shell);
                     }
                 }
                 ClientEv::Notify { title, message, image } => {
@@ -238,11 +242,11 @@ fn main() {
                         notices::forget(&dropped);
                         notices::save(&app.notes);
                     }
-                    if let Some(popup) = popup_of(&ctx_timer.shell) {
-                        refresh_popup(&ctx_timer.app, &popup);
+                    if let Some(_popup) = popup_of(&ctx_timer.shell) {
+                        refresh_popup(&ctx_timer.app, &ctx_timer.shell);
                     }
                     if open {
-                        kick_notice_anim(&ctx_timer);
+                        kick_notice_anim(&ctx_timer.app, &ctx_timer.shell);
                     }
                     let icon = icons::asset_path("icon.png");
                     let icon = icon.display().to_string();
@@ -273,8 +277,8 @@ fn main() {
                         }
                     };
                     if kept {
-                        if let Some(popup) = popup_of(&ctx_timer.shell) {
-                            refresh_popup(&ctx_timer.app, &popup);
+                        if let Some(_popup) = popup_of(&ctx_timer.shell) {
+                            refresh_popup(&ctx_timer.app, &ctx_timer.shell);
                         }
                     } else {
                         notices::forget(&[path]);
@@ -288,8 +292,16 @@ fn main() {
             }
         }
         if ctx_timer.app.borrow().close_popup {
-            ctx_timer.app.borrow_mut().close_popup = false;
-            hide_popup(&ctx_timer);
+            let waited = ctx_timer.app.borrow().blur_at.elapsed() >= Duration::from_millis(100);
+            let inside = tray_has_focus(&ctx_timer.shell);
+            if inside {
+                let mut app = ctx_timer.app.borrow_mut();
+                app.close_popup = false;
+                app.popup_focused = true;
+            } else if waited {
+                ctx_timer.app.borrow_mut().close_popup = false;
+                hide_popup(&ctx_timer);
+            }
         }
         if ctx_timer.app.borrow().cfg.theme == "system" {
             let dark = theme::system_dark();
@@ -307,8 +319,8 @@ fn main() {
         }
         if ctx_timer.app.borrow().popup_open && age_tick.elapsed() >= Duration::from_secs(60) {
             age_tick = Instant::now();
-            if let Some(popup) = popup_of(&ctx_timer.shell) {
-                refresh_popup(&ctx_timer.app, &popup);
+            if let Some(_popup) = popup_of(&ctx_timer.shell) {
+                refresh_popup(&ctx_timer.app, &ctx_timer.shell);
             }
         }
     });
@@ -346,6 +358,38 @@ fn popup_of(shell: &RefCell<Shell>) -> Option<Popup> {
     shell.borrow().popup.as_ref().map(Popup::clone_strong)
 }
 
+fn notices_of(shell: &RefCell<Shell>) -> Option<Notices> {
+    shell.borrow().notices.as_ref().map(Notices::clone_strong)
+}
+
+fn hide_notices(shell: &RefCell<Shell>) {
+    let Some(notices) = notices_of(shell) else { return };
+    let was_open = notices.window().is_visible();
+    notices.hide().ok();
+    if !was_open {
+        return;
+    }
+    if let Some(popup) = popup_of(shell) {
+        if popup.window().is_visible() {
+            let _ = popup.window().with_winit_window(|window| {
+                window.focus_window();
+            });
+        }
+    }
+}
+
+fn tray_has_focus(shell: &RefCell<Shell>) -> bool {
+    let popup = popup_of(shell);
+    let notices = notices_of(shell);
+    let popup_focused = popup.as_ref().is_some_and(|popup| window_focused(popup.window()));
+    let notes_focused = notices.as_ref().is_some_and(|notes| window_focused(notes.window()));
+    popup_focused || notes_focused
+}
+
+fn window_focused(window: &slint::Window) -> bool {
+    window.with_winit_window(|winit| winit.has_focus()).unwrap_or(false)
+}
+
 fn note_status(ctx: &Ctx, text: String) {
     ctx.app.borrow_mut().status = text.clone();
     if let Some(settings) = settings_of(&ctx.shell) {
@@ -356,7 +400,8 @@ fn note_status(ctx: &Ctx, text: String) {
 fn paint_theme(ctx: &Ctx) {
     let settings = settings_of(&ctx.shell);
     let popup = popup_of(&ctx.shell);
-    apply_theme(&ctx.app, settings.as_ref(), popup.as_ref(), &ctx.view, &ctx.tray, &ctx.rt);
+    let notices = notices_of(&ctx.shell);
+    apply_theme(&ctx.app, settings.as_ref(), popup.as_ref(), notices.as_ref(), &ctx.view, &ctx.tray, &ctx.rt);
 }
 
 fn ensure_settings(ctx: &Ctx) -> Settings {
@@ -396,6 +441,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
                 let mut app = focus.app.borrow_mut();
                 app.popup_focused = true;
                 app.popup_seen_focus = true;
+                app.close_popup = false;
             }
             winit::event::WindowEvent::Focused(false) => {
                 let mut app = focus.app.borrow_mut();
@@ -406,6 +452,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
                 app.popup_focused = false;
                 if close {
                     app.close_popup = true;
+                    app.blur_at = Instant::now();
                 }
             }
             winit::event::WindowEvent::KeyboardInput { event, .. }
@@ -415,6 +462,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
                 let mut app = focus.app.borrow_mut();
                 if app.popup_open && !app.pinned {
                     app.close_popup = true;
+                    app.blur_at = Instant::now().checked_sub(Duration::from_millis(200)).unwrap_or_else(Instant::now);
                 }
             }
             _ => {}
@@ -423,7 +471,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     });
     ctx.shell.borrow_mut().popup = Some(popup.clone_strong());
     paint_theme(ctx);
-    refresh_popup(&ctx.app, &popup);
+    refresh_popup(&ctx.app, &ctx.shell);
     apply_header_icons(&popup);
     wire_popup(ctx, &popup);
     popup
@@ -475,6 +523,7 @@ fn hide_popup(ctx: &Ctx) {
     if ctx.app.borrow().closing {
         return;
     }
+    hide_notices(&ctx.shell);
     let Some(popup) = popup_of(&ctx.shell) else {
         finish_hide(ctx, None);
         return;
@@ -526,6 +575,7 @@ fn slide_closed(ctx: &Ctx, popup: &Popup) {
 }
 
 fn finish_hide(ctx: &Ctx, popup: Option<&Popup>) {
+    hide_notices(&ctx.shell);
     if let Some(popup) = popup {
         popup.hide().ok();
     }
@@ -574,7 +624,6 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
 fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
     settings.show().ok();
-    lock_settings(settings);
     let _ = settings.window().with_winit_window(|window| {
         let scale = window.scale_factor() as f32;
         if scale.is_finite() && scale > 0.0 {
@@ -588,7 +637,6 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
     let kick = slint::Timer::default();
     kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
-            lock_settings(&settings);
             raise_settings(&ctx_kick, &settings);
         }
     });
@@ -597,11 +645,7 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
 
 fn lock_settings(settings: &Settings) {
     let _ = settings.window().with_winit_window(|window| {
-        let logical = winit::dpi::LogicalSize::new(560.0, 640.0);
-        let _ = window.request_inner_size(logical);
         window.set_resizable(false);
-        window.set_min_inner_size(Some(logical));
-        window.set_max_inner_size(Some(logical));
     });
 }
 
@@ -657,7 +701,6 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         hide_popup(ctx);
         return false;
     }
-    refresh_popup(&ctx.app, &popup);
     {
         let mut app = ctx.app.borrow_mut();
         app.popup_open = true;
@@ -666,6 +709,7 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         app.close_popup = false;
         app.popup_at = Instant::now();
     }
+    refresh_popup(&ctx.app, &ctx.shell);
     popup.set_pinned(ctx.app.borrow().pinned);
     let height = popup.get_layout_height();
     popup.set_slide(if height > 1.0 { height } else { 0.0 });
@@ -684,42 +728,160 @@ fn toggle_popup(ctx: &Ctx) -> bool {
     true
 }
 
-fn refresh_popup(app: &Rc<RefCell<App>>, popup: &Popup) {
-    let app = app.borrow();
-    let unset = app.catalog.tr(12);
-    let tiles = app.cfg.layout == "tiles";
-    let faces: Vec<Face> = app.cfg.buttons.iter().enumerate().map(|(index, id)| {
-        let known = app.entities.get(id);
-        let custom = app.cfg.labels.get(index).map(String::as_str).unwrap_or("");
-        Face {
-            text: ha::tray_label(id, known, custom, &unset, tiles).into(),
-            on: ha::button_on(known),
-            kind: ha::entity_kind(id, known).into(),
-        }
-    }).collect();
+fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
+    let Some(popup) = popup_of(shell) else { return };
+    let (faces, tiles, button_size, pinned) = {
+        let app = app.borrow();
+        let unset = app.catalog.tr(12);
+        let tiles = app.cfg.layout == "tiles";
+        let faces: Vec<Face> = app.cfg.buttons.iter().enumerate().map(|(index, id)| {
+            let known = app.entities.get(id);
+            let custom = app.cfg.labels.get(index).map(String::as_str).unwrap_or("");
+            let on = ha::button_on(known);
+            let kind = ha::entity_kind(id, known);
+            let icon = icons::button_icon(&kind, on);
+            Face {
+                text: ha::tray_label(id, known, custom, &unset, tiles).into(),
+                on,
+                kind: kind.into(),
+                has_icon: icon.is_some(),
+                tint: icon.as_ref().map(|icon| icon.tint).unwrap_or(false),
+                icon: icon.map(|icon| icon.image).unwrap_or_default(),
+            }
+        }).collect();
+        (faces, tiles, app.cfg.button_size as f32, app.pinned)
+    };
     popup.set_tiles(tiles);
-    popup.set_button_size(app.cfg.button_size as f32);
-    popup.set_pinned(app.pinned);
+    popup.set_button_size(button_size);
+    popup.set_pinned(pinned);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-    let language = app.cfg.language.clone();
-    let notices: Vec<Notice> = app.notes.iter().map(|note| {
-        let loaded = if note.image.is_empty() {
-            None
-        } else {
-            slint::Image::load_from_path(std::path::Path::new(&note.image)).ok()
-        };
-        Notice {
-            title: note.title.clone().into(),
-            message: note.message.clone().into(),
-            when: notices::ago(note.at, now, &language, &app.catalog).into(),
-            has_image: loaded.is_some(),
-            image: loaded.unwrap_or_default(),
-            fade: note.fade,
+    sync_notices(app, shell);
+}
+
+fn sync_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
+    let Some(popup) = popup_of(shell) else {
+        hide_notices(shell);
+        return;
+    };
+    let (rows, notice_h, show_notes) = {
+        let app = app.borrow();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let language = app.cfg.language.clone();
+        let rows: Vec<Notice> = app.notes.iter().map(|note| {
+            let loaded = if note.image.is_empty() {
+                None
+            } else {
+                slint::Image::load_from_path(std::path::Path::new(&note.image)).ok()
+            };
+            Notice {
+                title: note.title.clone().into(),
+                message: note.message.clone().into(),
+                when: notices::ago(note.at, now, &language, &app.catalog).into(),
+                has_image: loaded.is_some(),
+                image: loaded.unwrap_or_default(),
+                fade: note.fade,
+            }
+        }).collect();
+        let notice_h = notice_block(&app.notes);
+        let show_notes = app.popup_open && !app.closing && notice_h > 1.0;
+        (rows, notice_h, show_notes)
+    };
+    present_notices(app, shell, &popup, rows, notice_h, show_notes);
+}
+
+fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &Popup, rows: Vec<Notice>, notice_h: f32, show: bool) {
+    if !show {
+        hide_notices(shell);
+        return;
+    }
+    let notices = ensure_notices(app, shell);
+    let width = popup.get_layout_width();
+    if (notices.get_pane_width() - width).abs() > 0.5 {
+        notices.set_pane_width(width);
+    }
+    notices.set_notice_h(notice_h);
+    notices.set_notices(ModelRc::new(VecModel::from(rows)));
+    if notices.window().is_visible() {
+        return;
+    }
+    notices.show().ok();
+    let _ = notices.window().with_winit_window(|window| {
+        window.set_title("yoin-notices");
+    });
+    let _ = popup.window().with_winit_window(|window| {
+        window.focus_window();
+    });
+}
+
+fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
+    if let Some(existing) = notices_of(shell) {
+        return existing;
+    }
+    let notices = Notices::new().unwrap();
+    let _ = notices.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    bind_notice_focus(&notices, app.clone());
+    wire_notices(app, shell, &notices);
+    let choice = app.borrow().cfg.theme.clone();
+    let dark = app.borrow().dark;
+    notices.set_dark(dark);
+    if let Some(popup) = popup_of(shell) {
+        notices.set_ui_font_family(popup.get_ui_font_family());
+        notices.set_ui_font_size(popup.get_ui_font_size());
+        notices.set_ui_font_weight(popup.get_ui_font_weight());
+    }
+    paint_breeze(&notices.global::<Breeze>(), &theme::system_palette(&choice));
+    shell.borrow_mut().notices = Some(notices.clone_strong());
+    notices
+}
+
+fn bind_notice_focus(notices: &Notices, app: Rc<RefCell<App>>) {
+    let _ = notices.window().on_winit_window_event(move |_window, event| {
+        match event {
+            winit::event::WindowEvent::Focused(true) => {
+                let mut app = app.borrow_mut();
+                app.popup_focused = true;
+                app.popup_seen_focus = true;
+                app.close_popup = false;
+            }
+            winit::event::WindowEvent::Focused(false) => {
+                let mut app = app.borrow_mut();
+                let close = app.popup_seen_focus
+                    && app.popup_open
+                    && !app.pinned
+                    && app.popup_at.elapsed() >= Duration::from_millis(350);
+                if close {
+                    app.close_popup = true;
+                    app.blur_at = Instant::now();
+                }
+            }
+            _ => {}
         }
-    }).collect();
-    popup.set_notice_h(notice_block(&app.notes));
-    popup.set_notices(ModelRc::new(VecModel::from(notices)));
+        EventResult::Propagate
+    });
+}
+
+fn wire_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, notices: &Notices) {
+    let app_shot = app.clone();
+    notices.on_open_shot(move |index| {
+        let path = app_shot.borrow().notes.get(index as usize).map(|note| note.image.clone()).unwrap_or_default();
+        if std::path::Path::new(&path).is_file() {
+            let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+        }
+    });
+    let app_x = app.clone();
+    let shell_x = shell.clone();
+    notices.on_dismiss_note(move |index| {
+        let index = index as usize;
+        {
+            let mut app = app_x.borrow_mut();
+            let Some(note) = app.notes.get_mut(index) else { return };
+            if note.closing {
+                return;
+            }
+            note.closing = true;
+        }
+        kick_notice_anim(&app_x, &shell_x);
+    });
 }
 
 fn notice_block(notes: &[notices::Note]) -> f32 {
@@ -731,57 +893,56 @@ fn notice_block(notes: &[notices::Note]) -> f32 {
     16.0 + span * 62.0 + rules
 }
 
-fn kick_notice_anim(ctx: &Ctx) {
-    if ctx.shell.borrow().notice_timer.is_some() {
+fn kick_notice_anim(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
+    if shell.borrow().notice_timer.is_some() {
         return;
     }
     let timer = Rc::new(slint::Timer::default());
     let tick = timer.clone();
-    let ctx_tick = ctx_from(ctx);
+    let app_tick = app.clone();
+    let shell_tick = shell.clone();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
-        if !step_notices(&ctx_tick) {
+        if !step_notices(&app_tick, &shell_tick) {
             tick.stop();
-            ctx_tick.shell.borrow_mut().notice_timer = None;
+            shell_tick.borrow_mut().notice_timer = None;
         }
     });
-    ctx.shell.borrow_mut().notice_timer = Some(timer);
+    shell.borrow_mut().notice_timer = Some(timer);
 }
 
-fn step_notices(ctx: &Ctx) -> bool {
-    let open = ctx.app.borrow().popup_open;
+fn step_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> bool {
+    let open = app.borrow().popup_open;
     let mut dropped = Vec::new();
     let mut changed = false;
     {
-        let mut app = ctx.app.borrow_mut();
+        let mut state = app.borrow_mut();
         let mut index = 0;
-        while index < app.notes.len() {
-            if app.notes[index].closing {
-                if !open || app.notes[index].fade <= 0.0 {
-                    dropped.push(app.notes.remove(index).image);
+        while index < state.notes.len() {
+            if state.notes[index].closing {
+                if !open || state.notes[index].fade <= 0.0 {
+                    dropped.push(state.notes.remove(index).image);
                     changed = true;
                     continue;
                 }
-                app.notes[index].fade = (app.notes[index].fade - 0.22).max(0.0);
+                state.notes[index].fade = (state.notes[index].fade - 0.22).max(0.0);
                 changed = true;
-            } else if app.notes[index].fade < 1.0 {
-                app.notes[index].fade = if open { (app.notes[index].fade + 0.22).min(1.0) } else { 1.0 };
+            } else if state.notes[index].fade < 1.0 {
+                state.notes[index].fade = if open { (state.notes[index].fade + 0.22).min(1.0) } else { 1.0 };
                 changed = true;
             }
             index += 1;
         }
         if !dropped.is_empty() {
-            notices::save(&app.notes);
+            notices::save(&state.notes);
         }
     }
     if !dropped.is_empty() {
         notices::forget(&dropped);
     }
     if changed {
-        if let Some(popup) = popup_of(&ctx.shell) {
-            refresh_popup(&ctx.app, &popup);
-        }
+        sync_notices(app, shell);
     }
-    ctx.app.borrow().notes.iter().any(|note| note.closing || note.fade < 1.0)
+    app.borrow().notes.iter().any(|note| note.closing || note.fade < 1.0)
 }
 
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -804,6 +965,9 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_size(cat.tr(37).into());
     settings.set_t_size_hint(cat.tr(39).into());
     settings.set_t_rename(cat.tr(38).into());
+    settings.set_t_about(cat.tr(51).into());
+    settings.set_t_about_body(cat.tr(52).into());
+    settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
     settings.set_token(app_ref.cfg.token.clone().into());
@@ -853,6 +1017,7 @@ fn apply_theme(
     app: &Rc<RefCell<App>>,
     settings: Option<&Settings>,
     popup: Option<&Popup>,
+    notices: Option<&Notices>,
     view: &Arc<Mutex<TrayView>>,
     tray: &TrayHandle,
     rt: &tokio::runtime::Handle,
@@ -872,10 +1037,17 @@ fn apply_theme(
     }
     if let Some(popup) = popup {
         popup.set_dark(dark);
-        popup.set_ui_font_family(family);
+        popup.set_ui_font_family(family.clone());
         popup.set_ui_font_size(font.size_px);
         popup.set_ui_font_weight(font.weight);
         paint_breeze(&popup.global::<Breeze>(), &colors);
+    }
+    if let Some(notices) = notices {
+        notices.set_dark(dark);
+        notices.set_ui_font_family(family);
+        notices.set_ui_font_size(font.size_px);
+        notices.set_ui_font_weight(font.weight);
+        paint_breeze(&notices.global::<Breeze>(), &colors);
     }
     let file = if dark { "tray-light.png" } else { "tray-dark.png" };
     let mut path = icons::asset_path(file);
@@ -935,8 +1107,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         if let Some(settings) = settings_a.upgrade() {
             fill_rows(&app_a, &settings);
         }
-        if let Some(popup) = popup_of(&shell_a) {
-            refresh_popup(&app_a, &popup);
+        if let Some(_popup) = popup_of(&shell_a) {
+            refresh_popup(&app_a, &shell_a);
         }
     });
     bind_move(&ctx.app, &ctx.shell, settings, true);
@@ -964,8 +1136,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         if let Some(settings) = settings_r.upgrade() {
             fill_rows(&app_r, &settings);
         }
-        if let Some(popup) = popup_of(&shell_r) {
-            refresh_popup(&app_r, &popup);
+        if let Some(_popup) = popup_of(&shell_r) {
+            refresh_popup(&app_r, &shell_r);
         }
     });
     let app_k = ctx.app.clone();
@@ -991,8 +1163,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         }
         drop(borrowed);
         let _ = config::save_config(&app_k.borrow().cfg, &config::config_path());
-        if let Some(popup) = popup_of(&shell_k) {
-            refresh_popup(&app_k, &popup);
+        if let Some(_popup) = popup_of(&shell_k) {
+            refresh_popup(&app_k, &shell_k);
         }
         if let Some(settings) = settings_k.upgrade() {
             fill_rows(&app_k, &settings);
@@ -1077,8 +1249,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         if let Some(settings) = settings_n.upgrade() {
             fill_rows(&app_n, &settings);
         }
-        if let Some(popup) = popup_of(&shell_n) {
-            refresh_popup(&app_n, &popup);
+        if let Some(_popup) = popup_of(&shell_n) {
+            refresh_popup(&app_n, &shell_n);
         }
     });
     let ctx_y = ctx_from(ctx);
@@ -1089,8 +1261,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         }
         ctx_y.app.borrow_mut().cfg.layout = layout.into();
         let _ = config::save_config(&ctx_y.app.borrow().cfg, &config::config_path());
-        if let Some(popup) = popup_of(&ctx_y.shell) {
-            refresh_popup(&ctx_y.app, &popup);
+        if let Some(_popup) = popup_of(&ctx_y.shell) {
+            refresh_popup(&ctx_y.app, &ctx_y.shell);
         }
     });
     let ctx_z = ctx_from(ctx);
@@ -1101,9 +1273,12 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         }
         ctx_z.app.borrow_mut().cfg.button_size = size;
         let _ = config::save_config(&ctx_z.app.borrow().cfg, &config::config_path());
-        if let Some(popup) = popup_of(&ctx_z.shell) {
-            refresh_popup(&ctx_z.app, &popup);
+        if let Some(_popup) = popup_of(&ctx_z.shell) {
+            refresh_popup(&ctx_z.app, &ctx_z.shell);
         }
+    });
+    settings.on_open_source(move || {
+        let _ = std::process::Command::new("xdg-open").arg("https://github.com/yrmuq/yoin").spawn();
     });
 }
 
@@ -1136,26 +1311,6 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
             popup.set_pinned(next);
         }
     });
-    let app_shot = ctx.app.clone();
-    popup.on_open_shot(move |index| {
-        let path = app_shot.borrow().notes.get(index as usize).map(|note| note.image.clone()).unwrap_or_default();
-        if std::path::Path::new(&path).is_file() {
-            let _ = std::process::Command::new("xdg-open").arg(path).spawn();
-        }
-    });
-    let ctx_x = ctx_from(ctx);
-    popup.on_dismiss_note(move |index| {
-        let index = index as usize;
-        {
-            let mut app = ctx_x.app.borrow_mut();
-            let Some(note) = app.notes.get_mut(index) else { return };
-            if note.closing {
-                return;
-            }
-            note.closing = true;
-        }
-        kick_notice_anim(&ctx_x);
-    });
 }
 
 fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Settings, up: bool) {
@@ -1187,8 +1342,8 @@ fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Sett
         if let Some(settings) = settings_w.upgrade() {
             fill_rows(&app, &settings);
         }
-        if let Some(popup) = popup_of(&shell) {
-            refresh_popup(&app, &popup);
+        if let Some(_popup) = popup_of(&shell) {
+            refresh_popup(&app, &shell);
         }
     };
     if up {

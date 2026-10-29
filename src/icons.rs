@@ -67,6 +67,46 @@ pub struct ThemeIcon {
     pub tint: bool,
 }
 
+pub fn button_icon(kind: &str, on: bool) -> Option<ThemeIcon> {
+    for name in icon_candidates(kind, on) {
+        if let Some(icon) = theme_icon(name) {
+            return Some(icon);
+        }
+    }
+    None
+}
+
+fn icon_candidates(kind: &str, on: bool) -> &'static [&'static str] {
+    match (kind, on) {
+        ("light", false) => &["flashlight-off", "brightness-low"],
+        ("light", true) => &["flashlight-on", "brightness-high"],
+        ("switch" | "input_boolean", false) => &["switch-off", "media-playback-stop"],
+        ("switch" | "input_boolean", true) => &["switch-on", "media-playback-start"],
+        ("lock", false) => &["object-locked", "system-lock-screen"],
+        ("lock", true) => &["object-unlocked", "unlock"],
+        ("alarm_control_panel", false) => &["security-low"],
+        ("alarm_control_panel", true) => &["security-high"],
+        ("climate" | "water_heater" | "humidifier", false) => &["temperature-cold"],
+        ("climate" | "water_heater" | "humidifier", true) => &["temperature-warm"],
+        ("cover", _) => &["window-shade"],
+        ("fan", _) => &["weather-wind", "draw-arrow-down"],
+        ("media_player", false) => &["media-playback-stop"],
+        ("media_player", true) => &["media-playback-start"],
+        ("script", _) => &["document-edit"],
+        ("automation", _) => &["system-run"],
+        ("siren", false) => &["audio-volume-muted"],
+        ("siren", true) => &["audio-volume-high"],
+        ("remote", _) => &["input-keyboard"],
+        ("camera", false) => &["camera-off", "camera-photo"],
+        ("camera", true) => &["camera-on", "camera-photo"],
+        ("valve", false) => &["network-wired"],
+        ("valve", true) => &["network-connect"],
+        ("group", _) => &["view-group"],
+        (_, false) => &["dialog-cancel"],
+        (_, true) => &["dialog-ok-apply"],
+    }
+}
+
 pub fn theme_icon(name: &str) -> Option<ThemeIcon> {
     let mut seen = std::collections::HashSet::new();
     let theme = icon_theme_name();
@@ -293,5 +333,11 @@ mod tests {
         std::fs::write(&file, "<svg><path fill=\"#ff0000\"/><path fill=\"#00ff00\"/></svg>").unwrap();
         assert!(!should_tint(&file));
         let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn switch_uses_two_different_icons() {
+        assert_ne!(icon_candidates("switch", false), icon_candidates("switch", true));
+        assert_ne!(icon_candidates("light", false)[0], icon_candidates("light", true)[0]);
     }
 }
