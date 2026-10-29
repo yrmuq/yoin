@@ -8,7 +8,7 @@ ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 KIND="${1:-patch}"
 
-file_ver="$(python3 -c 'import pathlib,re; t=pathlib.Path("yoin/__init__.py").read_text(encoding="utf-8"); print(re.search(r"__version__ = \"([0-9]+\.[0-9]+\.[0-9]+)\"", t).group(1))')"
+file_ver="$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' Cargo.toml | head -n 1)"
 latest="$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
 if [ "v${file_ver}" != "${latest}" ]; then
     echo "tag ${latest:-<none>} does not match ${file_ver}" >&2
@@ -34,15 +34,33 @@ known_files() {
 '
     for path in $(git diff --name-only "${latest}..HEAD"); do
         case "$path" in
-            requirements.txt|packaging/appimage/build.sh|packaging/flatpak/io.github.yrmuq.yoin.yml|.github/dependabot.yml|.github/workflows/*) ;;
+            Cargo.toml|Cargo.lock|.github/dependabot.yml|.github/workflows/*|packaging/appimage/build.sh) ;;
             *) IFS=$old_ifs; return 1 ;;
         esac
     done
     IFS=$old_ifs
 }
 
+bump() {
+    printf '%s\n' "$2" | awk -F. -v kind="$1" '{
+        if (kind == "patch") printf "%d.%d.%d\n", $1, $2, $3 + 1
+        else printf "%d.%d.0\n", $1, $2 + 1
+    }'
+}
+
+write_version() {
+    ver="$1"
+    sed -i "s/^version = \"[0-9][0-9.]*\"/version = \"${ver}\"/" Cargo.toml
+    awk -v ver="$ver" '
+        $0 == "name = \"yoin\"" { hit = 1 }
+        hit && /^version = / { sub(/"[^"]*"/, "\"" ver "\""); hit = 0 }
+        { print }
+    ' Cargo.lock > Cargo.lock.tmp
+    mv Cargo.lock.tmp Cargo.lock
+}
+
 if [ "$KIND" = "minor" ]; then
-    new="$(python3 packaging/release/version.py minor "$file_ver")"
+    new="$(bump minor "$file_ver")"
 elif [ "$KIND" = "patch" ]; then
     if [ -z "$(git log "${latest}..HEAD" --format='%an')" ]; then
         echo "no commits since ${latest}"
@@ -52,13 +70,13 @@ elif [ "$KIND" = "patch" ]; then
         echo "changes are not dependency updates; waiting for a manual release"
         exit 0
     fi
-    new="$(python3 packaging/release/version.py patch "$file_ver")"
+    new="$(bump patch "$file_ver")"
 else
     echo "kind must be patch or minor" >&2
     exit 1
 fi
 
-python3 packaging/release/version.py write "$new" yoin/__init__.py
+write_version "$new"
 if [ -n "${NOTES:-}" ]; then
     notes="$NOTES"
 elif [ "$KIND" = "minor" ]; then
@@ -72,7 +90,7 @@ export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-github-actions[bot]}"
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
-git add yoin/__init__.py
+git add Cargo.toml Cargo.lock
 git commit -m "Version ${new}."
 git tag -a "v${new}" -m "$notes"
 git push origin HEAD

@@ -1,11 +1,14 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Kept so a tag pushed from dev does not publish the Python image.
-# The Rust image is .github/workflows/dev.yml, and only from a manual run.
+# Build the Rust AppImage for a version tag cut on main.
+# A manual X.Y.0 from the dev branch is .github/workflows/dev.yml.
 
 name: AppImage
 
 on:
+  push:
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
 
 permissions:
@@ -13,21 +16,26 @@ permissions:
 
 jobs:
   appimage:
-    # Python images stay on main. A tag cut from dev must not build one.
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/cache@v6
-        with:
-          path: packaging/appimage/build/cache
-          key: yoin-appimage-deps-20261013
+      - uses: dtolnay/rust-toolchain@stable
 
-      - name: Install file
+      - name: Libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y file
+          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev file
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            packaging/appimage/build/cache
+          key: yoin-rust-appimage-${{ hashFiles('Cargo.lock') }}
 
       - name: Build
         run: bash packaging/appimage/build.sh

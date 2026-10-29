@@ -1,6 +1,6 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Friday: refresh the two pins Dependabot cannot see, and merge that PR.
+# Friday: refresh the appimagetool pin Dependabot cannot see, and merge that PR.
 
 name: Pins
 
@@ -16,15 +16,22 @@ permissions:
 jobs:
   pins:
     if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
-      - name: Update pins
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+
+      - name: Update pin
         id: pins
         run: |
           set +e
-          python3 packaging/release/update_pins.py
+          sh packaging/release/pin-tool.sh
           code=$?
           set -e
           if [ "$code" = 2 ]; then
@@ -46,12 +53,12 @@ jobs:
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           set -eu
-          python3 -m unittest discover -s tests
+          cargo test
           git checkout -B deps/pins
-          git add packaging/appimage/build.sh packaging/flatpak/io.github.yrmuq.yoin.yml .github/workflows/appimage.yml
-          git commit -m "Update pinned CPython and appimagetool."
+          git add packaging/appimage/build.sh
+          git commit -m "Update the pinned appimagetool."
           git push --force -u origin HEAD:deps/pins
           gh pr create --repo "$GITHUB_REPOSITORY" --base main --head deps/pins \
-            --title "Update pinned CPython and appimagetool." \
+            --title "Update the pinned appimagetool." \
             --body "Automatic pin update." || true
           gh pr merge deps/pins --repo "$GITHUB_REPOSITORY" --squash --delete-branch
