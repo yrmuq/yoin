@@ -80,8 +80,8 @@ component KindIcon inherits Rectangle {
 component ToolButton inherits Rectangle {
     in property <bool> active: false;
     callback clicked;
-    width: 26px;
-    height: 26px;
+    width: 32px;
+    height: 32px;
     border-radius: Breeze.radius;
     background: active ? Breeze.selection : (hover.has-hover ? Breeze.button-hover : transparent);
     border-width: active ? 1px : 0;
@@ -99,47 +99,11 @@ component ToolButton inherits Rectangle {
     }
 }
 
-component LinkGlyph inherits Path {
+component BreezeIcon inherits Image {
     in property <color> ink;
-    width: 16px;
-    height: 16px;
-    viewbox-width: 16;
-    viewbox-height: 16;
-    stroke: ink;
-    stroke-width: 1.4px;
-    fill: transparent;
-    commands: "M 3.2 6.4 H 6.2 M 3.2 6.4 V 13.2 H 10.2 V 10.2 M 7.4 8.6 L 13 3.2 M 8.6 3.2 H 13 V 7.6";
-}
-
-component PinGlyph inherits Rectangle {
-    in property <bool> active;
-    in property <color> ink;
-    width: 16px;
-    height: 16px;
-    background: transparent;
-    Path {
-        width: parent.width;
-        height: parent.height;
-        viewbox-width: 16;
-        viewbox-height: 16;
-        stroke: root.ink;
-        stroke-width: 1.4px;
-        fill: transparent;
-        commands: "M 6.2 2 H 9.8 V 5.2 H 12.2 V 7.4 H 3.8 V 5.2 H 6.2 Z M 7.2 7.4 H 8.8 V 13.8";
-        transform-rotation: root.active ? 0deg : -40deg;
-    }
-}
-
-component GearGlyph inherits Path {
-    in property <color> ink;
-    width: 16px;
-    height: 16px;
-    viewbox-width: 16;
-    viewbox-height: 16;
-    stroke: ink;
-    stroke-width: 1.4px;
-    fill: transparent;
-    commands: "M 2 4.2 H 14 M 2 8 H 14 M 2 11.8 H 14 M 5 2.8 V 5.6 M 10.6 6.6 V 9.4 M 7 10.4 V 13.2";
+    width: 22px;
+    height: 22px;
+    colorize: ink;
 }
 
 component SizeSlider inherits Rectangle {
@@ -155,15 +119,15 @@ component SizeSlider inherits Rectangle {
     property <float> pos: Math.max(0, Math.min((root.value - root.minimum) / root.span, 1));
     property <length> travel: Math.max(root.width - root.knob, 1px);
     Rectangle {
+        x: 0px;
         y: (parent.height - 4px) / 2;
         height: 4px;
         width: parent.width;
         border-radius: 2px;
         background: Breeze.frame;
-        border-width: 1px;
-        border-color: Breeze.outline;
     }
     Rectangle {
+        x: 0px;
         y: (parent.height - 4px) / 2;
         height: 4px;
         width: root.pos * root.travel + root.knob / 2;
@@ -352,7 +316,7 @@ export component Popup inherits Window {
     out property <length> layout-width: root.width;
     out property <length> layout-height: root.height;
     width: root.tiles ? (pad * 2 + cols * tile + Math.max(cols - 1, 0) * gap) : 300px;
-    height: pad + 26px + 4px + body-h + pad;
+    height: pad + 32px + 4px + body-h + pad;
     background: transparent;
     card := Rectangle {
         y: root.slide;
@@ -368,23 +332,43 @@ export component Popup inherits Window {
             padding: root.pad;
             spacing: 4px;
             Rectangle {
-                height: 26px;
+                height: 32px;
                 background: transparent;
                 ToolButton {
                     x: 0px;
                     clicked => { root.open-home(); }
-                    LinkGlyph { ink: Breeze.fg; }
+                    BreezeIcon { source: @image-url("icons/open-link.svg"); ink: Breeze.fg; }
                 }
                 ToolButton {
-                    x: parent.width - 54px;
+                    x: parent.width - 68px;
                     clicked => { root.configure(); }
-                    GearGlyph { ink: Breeze.fg; }
+                    BreezeIcon { source: @image-url("icons/configure.svg"); ink: Breeze.fg; }
                 }
                 pin-btn := ToolButton {
-                    x: parent.width - 26px;
+                    x: parent.width - 32px;
                     active: root.pinned;
                     clicked => { root.pin-toggled(); }
-                    PinGlyph { ink: pin-btn.active ? Breeze.selection-fg : Breeze.fg; active: root.pinned; }
+                    if root.pinned: BreezeIcon {
+                        source: @image-url("icons/window-pin.svg");
+                        ink: Breeze.selection-fg;
+                    }
+                    if !root.pinned: Rectangle {
+                        width: 22px;
+                        height: 22px;
+                        background: transparent;
+                        BreezeIcon {
+                            x: 0px;
+                            y: 0px;
+                            source: @image-url("icons/window-unpin.svg");
+                            ink: Breeze.fg;
+                        }
+                        BreezeIcon {
+                            x: 0px;
+                            y: 0px;
+                            source: @image-url("icons/window-unpin-slash.svg");
+                            ink: #da4453;
+                        }
+                    }
                 }
             }
             if !root.tiles: VerticalLayout {
