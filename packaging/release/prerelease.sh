@@ -43,8 +43,8 @@ export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
 git add Cargo.toml Cargo.lock
-git commit -m "Version ${new}."
+git commit -m "Version ${new}." >&2
 git tag -a "v${new}" -m "$notes"
-git push --force origin HEAD:refs/heads/deps
-git push origin "refs/tags/v${new}"
+git push --force origin HEAD:refs/heads/deps >&2
+git push origin "refs/tags/v${new}" >&2
 printf '%s\n' "$new"
