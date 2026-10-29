@@ -50,13 +50,15 @@ async fn stop_saved(conn: &zbus::Connection, path: &std::path::Path) {
 
 const TASKBAR_RULE: &str = "\
 [yoin-tray]
-Description=yoin tray windows
+Description=yoin tray popup
 skiptaskbar=true
 skiptaskbarrule=2
 skippager=true
 skippagerrule=2
 skipswitcher=true
 skipswitcherrule=2
+title=yoin-buttons
+titlematch=1
 wmclass=yoin
 wmclassmatch=1
 wmclasscomplete=false
@@ -74,9 +76,41 @@ fn write_taskbar_rule() -> bool {
     fs::write(path, next).is_ok()
 }
 
+pub async fn raise_settings() {
+    let Ok(conn) = zbus::Connection::session().await else { return };
+    let _ = conn
+        .call_method(
+            Some("org.kde.kglobalaccel"),
+            "/component/kwin",
+            Some("org.kde.kglobalaccel.Component"),
+            "invokeShortcut",
+            &("Yoin Raise Settings",),
+        )
+        .await;
+}
+
+fn rewrite_tray_rule(text: &str) -> String {
+    let Some(start) = text.find("[yoin-tray]") else { return text.to_string() };
+    let after = &text[start + "[yoin-tray]".len()..];
+    let end = after.find("\n[").map(|index| start + "[yoin-tray]".len() + index + 1).unwrap_or(text.len());
+    let mut out = String::new();
+    out.push_str(&text[..start]);
+    out.push_str(TASKBAR_RULE);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(text[end..].trim_start_matches('\n'));
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out
+}
 fn merge_kwin_rules(text: &str) -> Option<String> {
     if text.contains("[yoin-tray]") {
-        return None;
+        if text.contains("title=yoin-buttons\n") {
+            return None;
+        }
+        return Some(rewrite_tray_rule(text));
     }
     let mut out = String::new();
     let mut in_general = false;
@@ -143,7 +177,13 @@ mod tests {
         assert!(first.contains("rules=1,yoin-tray\n"));
         assert!(first.contains("count=2\n"));
         assert!(first.contains("skiptaskbar=true\n"));
+        assert!(first.contains("title=yoin-buttons\n"));
         assert!(merge_kwin_rules(&first).is_none());
+        let stale = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin\nskiptaskbar=true\n";
+        let updated = merge_kwin_rules(stale).unwrap();
+        assert!(updated.contains("title=yoin-buttons\n"));
+        assert!(!updated.contains("Description=yoin tray windows\n"));
+        assert!(merge_kwin_rules(&updated).is_none());
         let empty = merge_kwin_rules("").unwrap();
         assert!(empty.contains("[yoin-tray]\n"));
         assert!(empty.contains("rules=yoin-tray\n"));

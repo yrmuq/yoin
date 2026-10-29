@@ -6,13 +6,6 @@ function textOf(value) {
     return value == null ? "" : String(value);
 }
 
-function isOurs(window) {
-    const caption = textOf(window.caption);
-    const klass = textOf(window.resourceClass);
-    const name = textOf(window.resourceName);
-    return caption === "yoin" || caption === "yoin-buttons" || klass === "yoin" || name === "yoin";
-}
-
 function isPopup(window) {
     return textOf(window.caption) === "yoin-buttons" && !window.dialog;
 }
@@ -169,34 +162,45 @@ function track(window) {
 }
 
 function consider(window) {
-    if (isOurs(window)) {
-        hideFromTaskbar(window);
-    }
     if (isPopup(window)) {
+        hideFromTaskbar(window);
         track(window);
+        return;
+    }
+    if (isSettings(window)) {
+        showOnTaskbar(window);
     }
 }
 
-function raiseSettings(window) {
-    const caption = textOf(window.caption);
-    if (caption.indexOf("\u200b") !== -1) {
+function showOnTaskbar(window) {
+    window.skipTaskbar = false;
+    window.skipSwitcher = false;
+    window.skipPager = false;
+}
+
+function isSettings(window) {
+    return textOf(window.caption) === "yoin";
+}
+
+function raiseSettings() {
+    const list = workspace.windowList();
+    for (let i = 0; i < list.length; i++) {
+        const window = list[i];
+        if (!isSettings(window)) {
+            continue;
+        }
+        showOnTaskbar(window);
         window.minimized = false;
-        window.keepAbove = true;
         workspace.activeWindow = window;
-        return;
-    }
-    if (caption === "yoin") {
-        window.keepAbove = false;
     }
 }
+
+registerShortcut("Yoin Raise Settings", "Raise yoin settings", "", raiseSettings);
 
 function arm(window) {
     consider(window);
     if (window.captionChanged) {
-        window.captionChanged.connect(() => {
-            consider(window);
-            raiseSettings(window);
-        });
+        window.captionChanged.connect(() => consider(window));
     }
 }
 

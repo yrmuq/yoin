@@ -50,6 +50,12 @@ struct App {
     placer_ok: bool,
     place_warned: bool,
     status: String,
+    notes: Vec<Note>,
+}
+
+struct Note {
+    title: String,
+    message: String,
 }
 
 struct Shell {
@@ -57,7 +63,6 @@ struct Shell {
     popup: Option<Popup>,
     slide_timer: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
-    title_timer: Option<slint::Timer>,
 }
 
 struct Ctx {
@@ -83,8 +88,8 @@ fn main() {
         eprintln!("yoin: graphics: {err}");
         return;
     }
-    // Wayland reports this as the window class. KWin uses it to keep the
-    // process out of the taskbar before the window is mapped.
+    // Wayland reports this as the window class. The tray popup is kept off
+    // the taskbar. The settings window is not.
     let _ = slint::set_xdg_app_id("yoin");
     let mut cfg = config::load_config(&config::config_path());
     let folder = i18n::language_dir();
@@ -137,13 +142,13 @@ fn main() {
             placer_ok,
             place_warned: false,
             status: String::new(),
+            notes: Vec::new(),
         })),
         shell: Rc::new(RefCell::new(Shell {
             settings: None,
             popup: None,
             slide_timer: None,
             raise_timer: None,
-            title_timer: None,
         })),
         client_tx: client_tx.clone(),
         view: view.clone(),
@@ -218,6 +223,13 @@ fn main() {
                     }
                 }
                 ClientEv::Notify { title, message, image } => {
+                    {
+                        let mut app = ctx_timer.app.borrow_mut();
+                        remember_note(&mut app.notes, title.clone(), message.clone());
+                    }
+                    if let Some(popup) = popup_of(&ctx_timer.shell) {
+                        refresh_popup(&ctx_timer.app, &popup);
+                    }
                     let icon = icons::asset_path("icon.png");
                     let icon = icon.display().to_string();
                     let base = ctx_timer.app.borrow().cfg.url.clone();
@@ -519,25 +531,17 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
     settings.show().ok();
     lock_settings(settings);
-    raise_settings(settings);
+    raise_settings(ctx, settings);
     let weak = settings.as_weak();
+    let ctx_kick = ctx_from(ctx);
     let kick = slint::Timer::default();
     kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
             lock_settings(&settings);
-            raise_settings(&settings);
+            raise_settings(&ctx_kick, &settings);
         }
     });
-    let weak = settings.as_weak();
-    let back = slint::Timer::default();
-    back.start(slint::TimerMode::SingleShot, Duration::from_millis(220), move || {
-        if let Some(settings) = weak.upgrade() {
-            settings.set_caption("yoin".into());
-        }
-    });
-    let mut shell = ctx.shell.borrow_mut();
-    shell.raise_timer = Some(kick);
-    shell.title_timer = Some(back);
+    ctx.shell.borrow_mut().raise_timer = Some(kick);
 }
 
 fn lock_settings(settings: &Settings) {
@@ -565,11 +569,13 @@ fn apply_header_icons(popup: &Popup) {
     }
 }
 
-fn raise_settings(settings: &Settings) {
-    settings.set_caption("yoin\u{200b}".into());
+fn raise_settings(ctx: &Ctx, settings: &Settings) {
     let _ = settings.window().with_winit_window(|window| {
         window.set_minimized(false);
         window.focus_window();
+    });
+    ctx.rt.spawn(async {
+        place::raise_settings().await;
     });
 }
 
@@ -644,6 +650,19 @@ fn refresh_popup(app: &Rc<RefCell<App>>, popup: &Popup) {
     popup.set_button_size(app.cfg.button_size as f32);
     popup.set_pinned(app.pinned);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
+    let notices: Vec<Notice> = app.notes.iter().map(|note| Notice {
+        title: note.title.clone().into(),
+        message: note.message.clone().into(),
+    }).collect();
+    popup.set_notices(ModelRc::new(VecModel::from(notices)));
+}
+
+fn remember_note(notes: &mut Vec<Note>, title: String, message: String) {
+    notes.push(Note { title, message });
+    if notes.len() > 3 {
+        let extra = notes.len() - 3;
+        notes.drain(0..extra);
+    }
 }
 
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -1072,4 +1091,21 @@ fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::Un
     settings.set_status(app.borrow().catalog.tr(21).into());
     start_client(app, tx);
     close
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_three_notices_are_kept_oldest_first() {
+        let mut notes = Vec::new();
+        remember_note(&mut notes, "a".into(), "1".into());
+        remember_note(&mut notes, "b".into(), "2".into());
+        remember_note(&mut notes, "c".into(), "3".into());
+        remember_note(&mut notes, "d".into(), "4".into());
+        assert_eq!(notes.len(), 3);
+        assert_eq!(notes[0].title, "b");
+        assert_eq!(notes[2].title, "d");
+    }
 }

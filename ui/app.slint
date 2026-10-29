@@ -9,6 +9,11 @@ export struct Face {
     kind: string,
 }
 
+export struct Notice {
+    title: string,
+    message: string,
+}
+
 export struct Choice {
     index: int,
     label: string,
@@ -336,15 +341,62 @@ export component Popup inherits Window {
     property <length> body-h: root.tiles
         ? (tile-rows * tile + Math.max(tile-rows - 1, 0) * gap)
         : (Math.max(root.faces.length, 1) * (root.button-size + gap) - gap);
+    in-out property <[Notice]> notices;
+    property <length> note-gap: 8px;
+    property <length> note-row: 44px;
+    property <bool> has-notes: root.notices.length > 0;
+    property <length> notes-h: root.has-notes
+        ? (root.pad * 2 + root.notices.length * root.note-row + Math.max(root.notices.length - 1, 0) * 4px)
+        : 0px;
+    property <length> stack-gap: root.has-notes ? root.note-gap : 0px;
+    property <length> card-h: root.pad + 32px + 4px + root.body-h + root.pad;
     out property <length> layout-width: root.width;
     out property <length> layout-height: root.height;
     width: root.tiles ? (pad * 2 + cols * tile + Math.max(cols - 1, 0) * gap) : 300px;
-    height: pad + 32px + 4px + body-h + pad;
+    height: root.notes-h + root.stack-gap + root.card-h;
     background: transparent;
-    card := Rectangle {
+    notes := Rectangle {
         y: root.slide;
         width: parent.width;
-        height: parent.height;
+        height: root.notes-h;
+        visible: root.has-notes;
+        opacity: 1 - Math.min(root.slide / Math.max(root.height, 1px), 1);
+        background: Breeze.window;
+        border-radius: Breeze.radius;
+        border-width: 1px;
+        border-color: Breeze.frame;
+        clip: true;
+        VerticalLayout {
+            padding: root.pad;
+            spacing: 4px;
+            for note in root.notices: Rectangle {
+                height: root.note-row;
+                background: transparent;
+                VerticalLayout {
+                    alignment: start;
+                    Text {
+                        text: note.title;
+                        color: Breeze.fg;
+                        font-weight: 600;
+                        overflow: elide;
+                        wrap: no-wrap;
+                        height: note.title == "" ? 0px : 18px;
+                    }
+                    Text {
+                        text: note.message;
+                        color: Breeze.inactive;
+                        overflow: elide;
+                        wrap: no-wrap;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+    card := Rectangle {
+        y: root.slide + root.notes-h + root.stack-gap;
+        width: parent.width;
+        height: root.card-h;
         opacity: 1 - Math.min(root.slide / Math.max(root.height, 1px), 1);
         background: Breeze.window;
         border-radius: Breeze.radius;

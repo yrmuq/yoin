@@ -69,11 +69,11 @@ jobs:
               --clobber
             gh release edit "$TAG" \
               --repo "$GITHUB_REPOSITORY" \
-              --title "yoin ${VER}" \
+              --title "yoin dev" \
               --notes-file notes.md
           else
             gh release create "$TAG" dist/yoin-x86_64.AppImage \
               --repo "$GITHUB_REPOSITORY" \
-              --title "yoin ${VER}" \
+              --title "yoin dev" \
               --notes-file notes.md
           fi
