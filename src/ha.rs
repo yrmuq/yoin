@@ -128,6 +128,29 @@ pub fn notification_text(event: &Value) -> Option<(String, String)> {
     Some((title, message))
 }
 
+pub fn notification_image(event: &Value) -> Option<String> {
+    fn text(value: Option<&Value>) -> Option<String> {
+        let raw = value?.as_str()?.trim();
+        if raw.is_empty() { None } else { Some(raw.to_string()) }
+    }
+    let data = event.get("data");
+    if let Some(found) = text(data.and_then(|item| item.get("image")))
+        .or_else(|| text(data.and_then(|item| item.get("image_url"))))
+        .or_else(|| text(data.and_then(|item| item.get("attachment")).and_then(|item| item.get("url"))))
+        .or_else(|| text(data.and_then(|item| item.get("attachment"))))
+        .or_else(|| text(event.get("image")))
+    {
+        return Some(found);
+    }
+    let entity = data.and_then(|item| item.get("entity_id")).and_then(Value::as_str).unwrap_or("");
+    if let Some(id) = entity.strip_prefix("camera.") {
+        if !id.is_empty() && !id.contains('/') {
+            return Some(format!("/api/camera_proxy/{entity}"));
+        }
+    }
+    None
+}
+
 pub fn confirm_id(event: &Value) -> Option<String> {
     let value = event.get("hass_confirm_id")?.as_str()?;
     if value.is_empty() { None } else { Some(value.to_string()) }
@@ -185,6 +208,29 @@ pub fn button_on(known: Option<&Entity>) -> bool {
     !QUIET.iter().any(|item| *item == known.state)
 }
 
+pub fn entity_kind(entity_id: &str, known: Option<&Entity>) -> String {
+    if let Some(known) = known {
+        if !known.domain.is_empty() {
+            return known.domain.clone();
+        }
+    }
+    entity_id.split_once('.').map(|(domain, _)| domain.to_string()).unwrap_or_default()
+}
+
+pub fn tray_label(entity_id: &str, known: Option<&Entity>, custom: &str, unset: &str, tiles: bool) -> String {
+    let custom = custom.trim();
+    if !custom.is_empty() {
+        return custom.to_string();
+    }
+    if tiles {
+        if entity_id.is_empty() {
+            return unset.to_string();
+        }
+        return known.map(|item| item.name.clone()).filter(|name| !name.is_empty()).unwrap_or_else(|| entity_id.to_string());
+    }
+    button_label(entity_id, known, unset)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -214,6 +260,13 @@ mod tests {
         let event = serde_json::json!({"title": "Door", "message": "open", "hass_confirm_id": "abc"});
         assert_eq!(notification_text(&event).unwrap(), ("Door".into(), "open".into()));
         assert_eq!(confirm_id(&event).unwrap(), "abc");
+        let photo = serde_json::json!({"title": "Cam", "message": "motion", "data": {"image": "/api/camera_proxy/camera.door"}});
+        assert_eq!(notification_image(&photo).as_deref(), Some("/api/camera_proxy/camera.door"));
+        let attached = serde_json::json!({"title": "Cam", "message": "motion", "data": {"attachment": {"url": "https://ha.local/a.jpg"}}});
+        assert_eq!(notification_image(&attached).as_deref(), Some("https://ha.local/a.jpg"));
+        let camera = serde_json::json!({"title": "Cam", "message": "motion", "data": {"entity_id": "camera.yard"}});
+        assert_eq!(notification_image(&camera).as_deref(), Some("/api/camera_proxy/camera.yard"));
+        assert!(notification_image(&event).is_none());
         let states = serde_json::json!([
             {"entity_id": "light.a", "state": "on", "attributes": {"friendly_name": "Lamp"}},
             {"entity_id": "sensor.x", "state": "1", "attributes": {}}
@@ -223,5 +276,8 @@ mod tests {
         assert_eq!(found[0].name, "Lamp");
         assert!(button_on(Some(&found[0])));
         assert_eq!(button_label("", None, "Not set"), "Not set");
+        assert_eq!(tray_label("light.a", Some(&found[0]), " Lamp ", "Not set", false), "Lamp");
+        assert_eq!(tray_label("light.a", Some(&found[0]), "", "Not set", true), "Lamp");
+        assert_eq!(entity_kind("light.a", Some(&found[0])), "light");
     }
 }

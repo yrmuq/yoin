@@ -33,7 +33,7 @@ pub enum ClientEv {
     Registered(String),
     Entities(Vec<Entity>),
     State(Entity),
-    Notify(String, String),
+    Notify { title: String, message: String, image: Option<String> },
     Linked(bool),
 }
 
@@ -203,7 +203,8 @@ async fn run_once(
                                 send(&tx, next_id, json!({"type": "mobile_app/push_notification_confirm", "webhook_id": session.webhook_id, "confirm_id": cid}));
                             }
                             if let Some((title, message)) = ha::notification_text(event) {
-                                let _ = out.send(ClientEv::Notify(title, message));
+                                let image = ha::notification_image(event);
+                                let _ = out.send(ClientEv::Notify { title, message, image });
                             }
                         } else if ident == state_id {
                             if let Some(entity) = ha::state_event(event) {

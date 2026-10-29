@@ -20,9 +20,12 @@ pub struct Config {
     pub device_id: String,
     pub webhook_id: String,
     pub buttons: Vec<String>,
+    pub labels: Vec<String>,
     pub autostart: bool,
     pub language: String,
     pub theme: String,
+    pub layout: String,
+    pub button_size: u32,
 }
 
 impl Default for Config {
@@ -34,9 +37,12 @@ impl Default for Config {
             device_id: String::new(),
             webhook_id: String::new(),
             buttons: vec![String::new()],
+            labels: vec![String::new()],
             autostart: false,
             language: String::new(),
             theme: "system".into(),
+            layout: "list".into(),
+            button_size: 40,
         }
     }
 }
@@ -77,8 +83,23 @@ pub fn normalize(mut cfg: Config) -> Config {
     if !matches!(cfg.theme.as_str(), "system" | "light" | "dark") {
         cfg.theme = "system".into();
     }
+    if !matches!(cfg.layout.as_str(), "list" | "tiles") {
+        cfg.layout = "list".into();
+    }
+    cfg.button_size = cfg.button_size.clamp(32, 80);
+    cfg.labels.truncate(MAX_BUTTONS);
+    cfg.labels.resize(cfg.buttons.len(), String::new());
+    for label in &mut cfg.labels {
+        let trimmed = label.trim();
+        *label = trimmed.chars().take(80).collect();
+    }
     cfg.language = cfg.language.trim().to_string();
     cfg
+}
+
+pub fn align_labels(cfg: &mut Config) {
+    cfg.labels.resize(cfg.buttons.len(), String::new());
+    cfg.labels.truncate(cfg.buttons.len());
 }
 
 pub fn load_config(path: &Path) -> Config {
@@ -171,5 +192,20 @@ mod tests {
         assert_eq!(cfg.buttons, vec![String::new()]);
         assert_eq!(cfg.theme, "system");
         assert!(!cfg.autostart);
+        assert_eq!(cfg.layout, "list");
+        assert_eq!(cfg.button_size, 40);
+        assert_eq!(cfg.labels, vec![String::new()]);
+    }
+
+    #[test]
+    fn labels_follow_buttons_and_size_is_clamped() {
+        let cfg: Config = serde_json::from_str(
+            r#"{"buttons":["light.a","switch.b"],"labels":[" Lamp "],"layout":"grid","button_size":999}"#,
+        )
+        .unwrap();
+        let cfg = normalize(cfg);
+        assert_eq!(cfg.labels, vec!["Lamp".to_string(), String::new()]);
+        assert_eq!(cfg.layout, "list");
+        assert_eq!(cfg.button_size, 80);
     }
 }

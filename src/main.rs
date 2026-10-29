@@ -40,6 +40,12 @@ struct App {
     names: Vec<Entity>,
     dark: bool,
     popup_open: bool,
+    popup_focused: bool,
+    popup_seen_focus: bool,
+    close_popup: bool,
+    pinned: bool,
+    editing: Option<usize>,
+    popup_at: Instant,
     placer_ok: bool,
     place_warned: bool,
     status: String,
@@ -48,6 +54,9 @@ struct App {
 struct Shell {
     settings: Option<Settings>,
     popup: Option<Popup>,
+    slide_timer: Option<Rc<slint::Timer>>,
+    raise_timer: Option<slint::Timer>,
+    title_timer: Option<slint::Timer>,
 }
 
 struct Ctx {
@@ -117,11 +126,23 @@ fn main() {
             names: Vec::new(),
             dark: false,
             popup_open: false,
+            popup_focused: false,
+            popup_seen_focus: false,
+            close_popup: false,
+            pinned: false,
+            editing: None,
+            popup_at: Instant::now(),
             placer_ok,
             place_warned: false,
             status: String::new(),
         })),
-        shell: Rc::new(RefCell::new(Shell { settings: None, popup: None })),
+        shell: Rc::new(RefCell::new(Shell {
+            settings: None,
+            popup: None,
+            slide_timer: None,
+            raise_timer: None,
+            title_timer: None,
+        })),
         client_tx: client_tx.clone(),
         view: view.clone(),
         tray: tray_handle.clone(),
@@ -133,7 +154,7 @@ fn main() {
     }
     if ctx.app.borrow().cfg.url.is_empty() || ctx.app.borrow().cfg.token.is_empty() {
         let settings = ensure_settings(&ctx);
-        settings.show().ok();
+        present_settings(&ctx, &settings);
     } else {
         start_client(&ctx.app, &ctx.client_tx);
     }
@@ -147,7 +168,7 @@ fn main() {
             match cmd {
                 TrayCmd::Settings => {
                     let settings = ensure_settings(&ctx_timer);
-                    settings.show().ok();
+                    present_settings(&ctx_timer, &settings);
                 }
                 TrayCmd::Toggle => toggles += 1,
             }
@@ -194,11 +215,17 @@ fn main() {
                         refresh_popup(&ctx_timer.app, &popup);
                     }
                 }
-                ClientEv::Notify(title, message) => {
+                ClientEv::Notify { title, message, image } => {
                     let icon = icons::asset_path("icon.png");
                     let icon = icon.display().to_string();
+                    let base = ctx_timer.app.borrow().cfg.url.clone();
+                    let token = ctx_timer.app.borrow().cfg.token.clone();
                     ctx_timer.rt.spawn(async move {
-                        notify::announce(&title, &message, &icon).await;
+                        let photo = match image {
+                            Some(image) => notify::fetch_image(&base, &token, &image).await,
+                            None => None,
+                        };
+                        notify::announce(&title, &message, &icon, photo.as_deref()).await;
                     });
                 }
                 ClientEv::Linked(up) => {
@@ -207,6 +234,10 @@ fn main() {
                     note_status(&ctx_timer, text);
                 }
             }
+        }
+        if ctx_timer.app.borrow().close_popup {
+            ctx_timer.app.borrow_mut().close_popup = false;
+            hide_popup(&ctx_timer);
         }
         if ctx_timer.app.borrow().cfg.theme == "system" {
             let dark = theme::system_dark();
@@ -294,11 +325,40 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     let popup = Popup::new().unwrap();
     let _ = popup.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
     let weak = popup.as_weak();
+    let focus = ctx_from(ctx);
     let _ = popup.window().on_winit_window_event(move |_window, event| {
-        if matches!(event, winit::event::WindowEvent::ScaleFactorChanged { .. }) {
-            if let Some(popup) = weak.upgrade() {
-                let _ = sharpen_popup(&popup);
+        match event {
+            winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(popup) = weak.upgrade() {
+                    let _ = sharpen_popup(&popup);
+                }
             }
+            winit::event::WindowEvent::Focused(true) => {
+                let mut app = focus.app.borrow_mut();
+                app.popup_focused = true;
+                app.popup_seen_focus = true;
+            }
+            winit::event::WindowEvent::Focused(false) => {
+                let mut app = focus.app.borrow_mut();
+                let close = app.popup_seen_focus
+                    && app.popup_open
+                    && !app.pinned
+                    && app.popup_at.elapsed() >= Duration::from_millis(350);
+                app.popup_focused = false;
+                if close {
+                    app.close_popup = true;
+                }
+            }
+            winit::event::WindowEvent::KeyboardInput { event, .. }
+                if event.state == winit::event::ElementState::Pressed
+                    && event.logical_key == winit::keyboard::Key::Named(winit::keyboard::NamedKey::Escape) =>
+            {
+                let mut app = focus.app.borrow_mut();
+                if app.popup_open && !app.pinned {
+                    app.close_popup = true;
+                }
+            }
+            _ => {}
         }
         EventResult::Propagate
     });
@@ -351,18 +411,132 @@ fn sharpen_popup(popup: &Popup) -> bool {
     pending
 }
 
+fn hide_popup(ctx: &Ctx) {
+    if let Some(timer) = ctx.shell.borrow().slide_timer.clone() {
+        timer.stop();
+    }
+    if let Some(popup) = popup_of(&ctx.shell) {
+        popup.set_slide(0.0);
+        popup.hide().ok();
+    }
+    let mut app = ctx.app.borrow_mut();
+    app.popup_open = false;
+    app.popup_focused = false;
+    app.popup_seen_focus = false;
+    app.close_popup = false;
+}
+
+fn start_slide(ctx: &Ctx, popup: &Popup) {
+    if let Some(timer) = ctx.shell.borrow().slide_timer.clone() {
+        timer.stop();
+    }
+    let height = popup.get_layout_height();
+    popup.set_slide(if height > 1.0 { height } else { 0.0 });
+    let weak = popup.as_weak();
+    let start = Rc::new(Cell::new(None::<Instant>));
+    let timer = Rc::new(slint::Timer::default());
+    let tick = timer.clone();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+        let Some(popup) = weak.upgrade() else {
+            tick.stop();
+            return;
+        };
+        let height = popup.get_layout_height();
+        if height < 2.0 {
+            return;
+        }
+        if start.get().is_none() {
+            start.set(Some(Instant::now()));
+        }
+        let elapsed = start.get().map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
+        let t = (elapsed / 0.18).min(1.0);
+        let ease = 1.0 - (1.0 - t).powi(3);
+        popup.set_slide(height * (1.0 - ease));
+        if t >= 1.0 {
+            popup.set_slide(0.0);
+            tick.stop();
+        }
+    });
+    ctx.shell.borrow_mut().slide_timer = Some(timer);
+}
+
+fn present_settings(ctx: &Ctx, settings: &Settings) {
+    dismiss_popup_if_loose(ctx);
+    settings.show().ok();
+    raise_settings(settings);
+    let weak = settings.as_weak();
+    let kick = slint::Timer::default();
+    kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
+        if let Some(settings) = weak.upgrade() {
+            raise_settings(&settings);
+        }
+    });
+    let weak = settings.as_weak();
+    let back = slint::Timer::default();
+    back.start(slint::TimerMode::SingleShot, Duration::from_millis(220), move || {
+        if let Some(settings) = weak.upgrade() {
+            settings.set_caption("yoin".into());
+        }
+    });
+    let mut shell = ctx.shell.borrow_mut();
+    shell.raise_timer = Some(kick);
+    shell.title_timer = Some(back);
+}
+
+fn raise_settings(settings: &Settings) {
+    settings.set_caption("yoin\u{200b}".into());
+    let _ = settings.window().with_winit_window(|window| {
+        window.set_minimized(false);
+        window.focus_window();
+    });
+}
+
+fn dismiss_popup_if_loose(ctx: &Ctx) {
+    let loose = {
+        let app = ctx.app.borrow();
+        app.popup_open && !app.pinned
+    };
+    if loose {
+        hide_popup(ctx);
+    }
+}
+
+fn open_home(ctx: &Ctx) {
+    let url = ctx.app.borrow().cfg.url.trim().to_string();
+    if url.is_empty() {
+        let text = ctx.app.borrow().catalog.tr(19);
+        note_status(ctx, text);
+        return;
+    }
+    dismiss_popup_if_loose(ctx);
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+}
+
 fn toggle_popup(ctx: &Ctx) -> bool {
     let popup = ensure_popup(ctx);
     if ctx.app.borrow().popup_open {
-        popup.hide().ok();
-        ctx.app.borrow_mut().popup_open = false;
+        hide_popup(ctx);
         return false;
     }
     refresh_popup(&ctx.app, &popup);
+    {
+        let mut app = ctx.app.borrow_mut();
+        app.popup_open = true;
+        app.popup_focused = false;
+        app.popup_seen_focus = false;
+        app.close_popup = false;
+        app.popup_at = Instant::now();
+    }
+    popup.set_pinned(ctx.app.borrow().pinned);
+    let height = popup.get_layout_height();
+    popup.set_slide(if height > 1.0 { height } else { 0.0 });
     popup.show().ok();
-    let _ = popup.window().with_winit_window(|window| window.set_title("yoin-buttons"));
+    let _ = popup.window().with_winit_window(|window| {
+        window.set_title("yoin-buttons");
+        window.focus_window();
+    });
     let _ = sharpen_popup(&popup);
-    ctx.app.borrow_mut().popup_open = true;
+    start_slide(ctx, &popup);
     if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
         ctx.app.borrow_mut().place_warned = true;
         let text = ctx.app.borrow().catalog.tr(23);
@@ -374,13 +548,19 @@ fn toggle_popup(ctx: &Ctx) -> bool {
 fn refresh_popup(app: &Rc<RefCell<App>>, popup: &Popup) {
     let app = app.borrow();
     let unset = app.catalog.tr(12);
-    let faces: Vec<Face> = app.cfg.buttons.iter().map(|id| {
+    let tiles = app.cfg.layout == "tiles";
+    let faces: Vec<Face> = app.cfg.buttons.iter().enumerate().map(|(index, id)| {
         let known = app.entities.get(id);
+        let custom = app.cfg.labels.get(index).map(String::as_str).unwrap_or("");
         Face {
-            text: ha::button_label(id, known, &unset).into(),
+            text: ha::tray_label(id, known, custom, &unset, tiles).into(),
             on: ha::button_on(known),
+            kind: ha::entity_kind(id, known).into(),
         }
     }).collect();
+    popup.set_tiles(tiles);
+    popup.set_button_size(app.cfg.button_size as f32);
+    popup.set_pinned(app.pinned);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
 }
 
@@ -400,6 +580,10 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_save(cat.tr(9).into());
     settings.set_t_language(cat.tr(13).into());
     settings.set_t_theme(cat.tr(14).into());
+    settings.set_t_layout(cat.tr(34).into());
+    settings.set_t_size(cat.tr(37).into());
+    settings.set_t_size_hint(cat.tr(39).into());
+    settings.set_t_rename(cat.tr(38).into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
     settings.set_token(app_ref.cfg.token.clone().into());
@@ -407,19 +591,24 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_autostart(app_ref.cfg.autostart);
     let names = i18n::languages(&i18n::language_dir());
     let index = names.iter().position(|n| n == &app_ref.cfg.language).unwrap_or(0) as i32;
-    settings.set_language_names(ModelRc::new(VecModel::from(names.into_iter().map(Into::into).collect::<Vec<slint::SharedString>>())));
-    settings.set_language_index(index);
-    settings.set_theme_names(ModelRc::new(VecModel::from(vec![
-        cat.tr(15).into(),
-        cat.tr(16).into(),
-        cat.tr(17).into(),
-    ])));
+    let language_names: Vec<slint::SharedString> = names.into_iter().map(Into::into).collect();
+    let theme_names = vec![cat.tr(15).into(), cat.tr(16).into(), cat.tr(17).into()];
     let theme_index = match app_ref.cfg.theme.as_str() {
         "light" => 1,
         "dark" => 2,
         _ => 0,
     };
+    let layout_names = vec![cat.tr(35).into(), cat.tr(36).into()];
+    let layout_index = if app_ref.cfg.layout == "tiles" { 1 } else { 0 };
+    let button_size = app_ref.cfg.button_size as f32;
+    drop(app_ref);
+    settings.set_language_names(ModelRc::new(VecModel::from(language_names)));
+    settings.set_language_index(index);
+    settings.set_theme_names(ModelRc::new(VecModel::from(theme_names)));
     settings.set_theme_index(theme_index);
+    settings.set_layout_names(ModelRc::new(VecModel::from(layout_names)));
+    settings.set_layout_index(layout_index);
+    settings.set_button_size_value(button_size);
 }
 
 fn fill_rows(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -428,13 +617,14 @@ fn fill_rows(app: &Rc<RefCell<App>>, settings: &Settings) {
     let mut labels = vec![unset.into()];
     labels.extend(app_ref.names.iter().map(|e| e.name.clone().into()));
     settings.set_entity_names(ModelRc::new(VecModel::from(labels)));
-    let rows: Vec<Choice> = app_ref.cfg.buttons.iter().map(|id| {
+    let rows: Vec<Choice> = app_ref.cfg.buttons.iter().enumerate().map(|(slot, id)| {
         let index = if id.is_empty() {
             0
         } else {
             app_ref.names.iter().position(|e| e.entity_id == *id).map(|i| i as i32 + 1).unwrap_or(0)
         };
-        Choice { index }
+        let label = app_ref.cfg.labels.get(slot).cloned().unwrap_or_default();
+        Choice { index, label: label.into(), editing: app_ref.editing == Some(slot) }
     }).collect();
     settings.set_rows(ModelRc::new(VecModel::from(rows)));
 }
@@ -503,6 +693,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             return;
         }
         app_a.borrow_mut().cfg.buttons.push(String::new());
+        app_a.borrow_mut().cfg.labels.push(String::new());
         let _ = config::save_config(&app_a.borrow().cfg, &config::config_path());
         if let Some(settings) = settings_a.upgrade() {
             fill_rows(&app_a, &settings);
@@ -524,6 +715,12 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         let index = index as usize;
         if index < cfg_app.cfg.buttons.len() {
             cfg_app.cfg.buttons.remove(index);
+            if index < cfg_app.cfg.labels.len() {
+                cfg_app.cfg.labels.remove(index);
+            }
+        }
+        if cfg_app.editing == Some(index) {
+            cfg_app.editing = None;
         }
         drop(cfg_app);
         let _ = config::save_config(&app_r.borrow().cfg, &config::config_path());
@@ -552,6 +749,9 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             return;
         }
         borrowed.cfg.buttons[row] = id;
+        if row < borrowed.cfg.labels.len() {
+            borrowed.cfg.labels[row].clear();
+        }
         drop(borrowed);
         let _ = config::save_config(&app_k.borrow().cfg, &config::config_path());
         if let Some(popup) = popup_of(&shell_k) {
@@ -599,6 +799,75 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         let _ = config::save_config(&ctx_t.app.borrow().cfg, &config::config_path());
         paint_theme(&ctx_t);
     });
+    let app_e = ctx.app.clone();
+    let settings_e = settings.as_weak();
+    settings.on_edit(move |index| {
+        let index = index as usize;
+        let mut app = app_e.borrow_mut();
+        if index >= app.cfg.buttons.len() {
+            return;
+        }
+        app.editing = if app.editing == Some(index) { None } else { Some(index) };
+        drop(app);
+        if let Some(settings) = settings_e.upgrade() {
+            fill_rows(&app_e, &settings);
+        }
+    });
+    let app_n = ctx.app.clone();
+    let shell_n = ctx.shell.clone();
+    let settings_n = settings.as_weak();
+    settings.on_rename(move |index, text| {
+        let index = index as usize;
+        let text = text.trim().to_string();
+        {
+            let mut app = app_n.borrow_mut();
+            if index >= app.cfg.buttons.len() {
+                return;
+            }
+            config::align_labels(&mut app.cfg);
+            if app.cfg.labels.get(index).map(String::as_str) == Some(text.as_str()) {
+                app.editing = None;
+                drop(app);
+                if let Some(settings) = settings_n.upgrade() {
+                    fill_rows(&app_n, &settings);
+                }
+                return;
+            }
+            app.cfg.labels[index] = text;
+            app.editing = None;
+        }
+        let _ = config::save_config(&app_n.borrow().cfg, &config::config_path());
+        if let Some(settings) = settings_n.upgrade() {
+            fill_rows(&app_n, &settings);
+        }
+        if let Some(popup) = popup_of(&shell_n) {
+            refresh_popup(&app_n, &popup);
+        }
+    });
+    let ctx_y = ctx_from(ctx);
+    settings.on_layout(move |index| {
+        let layout = if index == 1 { "tiles" } else { "list" };
+        if ctx_y.app.borrow().cfg.layout == layout {
+            return;
+        }
+        ctx_y.app.borrow_mut().cfg.layout = layout.into();
+        let _ = config::save_config(&ctx_y.app.borrow().cfg, &config::config_path());
+        if let Some(popup) = popup_of(&ctx_y.shell) {
+            refresh_popup(&ctx_y.app, &popup);
+        }
+    });
+    let ctx_z = ctx_from(ctx);
+    settings.on_size_changed(move |value| {
+        let size = value.round().clamp(32.0, 80.0) as u32;
+        if ctx_z.app.borrow().cfg.button_size == size {
+            return;
+        }
+        ctx_z.app.borrow_mut().cfg.button_size = size;
+        let _ = config::save_config(&ctx_z.app.borrow().cfg, &config::config_path());
+        if let Some(popup) = popup_of(&ctx_z.shell) {
+            refresh_popup(&ctx_z.app, &popup);
+        }
+    });
 }
 
 fn wire_popup(ctx: &Ctx, popup: &Popup) {
@@ -609,11 +878,26 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
         let entity = app_p.borrow().cfg.buttons.get(index as usize).cloned().unwrap_or_default();
         if entity.is_empty() {
             let settings = ensure_settings(&ctx_p);
-            settings.show().ok();
+            present_settings(&ctx_p, &settings);
             return;
         }
         let state = app_p.borrow().entities.get(&entity).map(|e| e.state.clone()).unwrap_or_default();
         let _ = tx.send(ClientCmd::Call { entity, state });
+    });
+    let ctx_c = ctx_from(ctx);
+    popup.on_configure(move || {
+        let settings = ensure_settings(&ctx_c);
+        present_settings(&ctx_c, &settings);
+    });
+    let ctx_h = ctx_from(ctx);
+    popup.on_open_home(move || open_home(&ctx_h));
+    let ctx_pin = ctx_from(ctx);
+    popup.on_pin_toggled(move || {
+        let next = !ctx_pin.app.borrow().pinned;
+        ctx_pin.app.borrow_mut().pinned = next;
+        if let Some(popup) = popup_of(&ctx_pin.shell) {
+            popup.set_pinned(next);
+        }
     });
 }
 
@@ -630,10 +914,16 @@ fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Sett
                 return;
             }
             borrowed.cfg.buttons.swap(index, index - 1);
+            if index < borrowed.cfg.labels.len() {
+                borrowed.cfg.labels.swap(index, index - 1);
+            }
         } else if index + 1 >= len {
             return;
         } else {
             borrowed.cfg.buttons.swap(index, index + 1);
+            if index + 1 < borrowed.cfg.labels.len() {
+                borrowed.cfg.labels.swap(index, index + 1);
+            }
         }
         drop(borrowed);
         let _ = config::save_config(&app.borrow().cfg, &config::config_path());

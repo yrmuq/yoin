@@ -177,10 +177,26 @@ function consider(window) {
     }
 }
 
+function raiseSettings(window) {
+    const caption = textOf(window.caption);
+    if (caption.indexOf("\u200b") !== -1) {
+        window.minimized = false;
+        window.keepAbove = true;
+        workspace.activeWindow = window;
+        return;
+    }
+    if (caption === "yoin") {
+        window.keepAbove = false;
+    }
+}
+
 function arm(window) {
     consider(window);
     if (window.captionChanged) {
-        window.captionChanged.connect(() => consider(window));
+        window.captionChanged.connect(() => {
+            consider(window);
+            raiseSettings(window);
+        });
     }
 }
 
