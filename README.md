@@ -16,7 +16,7 @@
 > [!NOTE]
 > **Active development:** `yoin` is still in active development. This branch (`dev`) is the Rust port: `ksni` for the tray and `slint` for the windows, with no Qt. A manual run of the `Rust AppImage` action on `dev` publishes `yoin X.Y.0`. `x86_64` AppImage builds are on the [Releases](https://github.com/yrmuq/yoin/releases) page.
 >
-> **Releases:** `X.Y.0` is a manual release. Later patch numbers are automatic dependency prereleases, cut on Friday, and the patch resets when the minor number changes.
+> **Releases:** `X.Y.0` is a manual release. A Dependabot update does not land on `main`. It publishes the next patch prerelease and deletes the previous one. The patch number keeps climbing until that `deps` branch is merged, which resets nothing by itself. The patch resets when the minor number changes.
 >
 > **Independent Project:** `yoin` is an independent project and is not affiliated with or endorsed by Home Assistant or the Open Home Foundation.
 

@@ -10,7 +10,7 @@ KIND="${1:-patch}"
 
 file_ver="$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' Cargo.toml | head -n 1)"
 latest="$(git tag -l 'v*.*.*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
-if [ "v${file_ver}" != "${latest}" ]; then
+if [ "$KIND" = "patch" ] && [ "v${file_ver}" != "${latest}" ]; then
     echo "tag ${latest:-<none>} does not match ${file_ver}" >&2
     exit 1
 fi
