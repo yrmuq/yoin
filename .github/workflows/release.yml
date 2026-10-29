@@ -1,22 +1,19 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Friday evening: one prerelease tag if only dependency commits landed.
-# A manual run with kind=minor cuts X.(Y+1).0 and resets the patch.
+# Manual only. kind=minor cuts X.(Y+1).0 from main and resets the patch.
+# Dependency prereleases are published by the Dependency prerelease workflow.
 
 name: Release
 
 on:
-  schedule:
-    - cron: "30 20 * * 5"
   workflow_dispatch:
     inputs:
       kind:
-        description: patch for dependency commits, minor for a manual release
+        description: minor cuts the next manual release
         type: choice
         options:
-          - patch
           - minor
-        default: patch
+        default: minor
 
 permissions:
   contents: write
@@ -34,4 +31,4 @@ jobs:
       - name: Tag
         env:
           GH_TOKEN: ${{ github.token }}
-        run: bash packaging/release/cut.sh "${{ github.event.inputs.kind || 'patch' }}"
+        run: bash packaging/release/cut.sh "${{ github.event.inputs.kind || 'minor' }}"
