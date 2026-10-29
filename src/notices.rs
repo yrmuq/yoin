@@ -84,6 +84,13 @@ pub fn forget(paths: &[String]) {
     }
 }
 
+pub fn dismiss(notes: &mut Vec<Note>, index: usize) -> Option<String> {
+    if index >= notes.len() {
+        return None;
+    }
+    Some(notes.remove(index).image)
+}
+
 pub fn attach(notes: &mut [Note], at: i64, image: String) -> bool {
     let Some(note) = notes.iter_mut().find(|note| note.at == at) else { return false };
     note.image = image;
@@ -238,5 +245,17 @@ mod tests {
         assert_eq!(notes.len(), 3);
         assert_eq!(notes[0].title, "1");
         assert_eq!(dropped, vec!["old.jpg".to_string()]);
+    }
+
+    #[test]
+    fn dismiss_removes_that_notice_only() {
+        let mut notes = vec![
+            Note { title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into() },
+            Note { title: "b".into(), message: String::new(), at: 2, image: String::new() },
+        ];
+        assert_eq!(dismiss(&mut notes, 0).as_deref(), Some("a.jpg"));
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].title, "b");
+        assert!(dismiss(&mut notes, 4).is_none());
     }
 }

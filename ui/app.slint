@@ -331,6 +331,7 @@ export component Popup inherits Window {
     callback open-home();
     callback pin-toggled();
     callback open-shot(int);
+    callback dismiss-note(int);
     in-out property <image> icon-open: @image-url("icons/open-link.svg");
     in-out property <image> icon-configure: @image-url("icons/configure.svg");
     in-out property <image> icon-pin: @image-url("icons/window-pin.svg");
@@ -380,29 +381,15 @@ export component Popup inherits Window {
                     height: root.note-rule;
                     background: Breeze.frame;
                 }
-                HorizontalLayout {
+                Rectangle {
                     height: root.note-row;
-                    spacing: 8px;
-                    alignment: center;
-                    if note.has-image: Rectangle {
-                        width: 40px;
-                        height: 40px;
-                        clip: true;
-                        border-radius: 3px;
-                        Image {
-                            width: parent.width;
-                            height: parent.height;
-                            source: note.image;
-                            image-fit: cover;
-                        }
-                        TouchArea {
-                            width: 100%;
-                            height: 100%;
-                            mouse-cursor: pointer;
-                            clicked => { root.open-shot(i); }
-                        }
-                    }
+                    width: 100%;
+                    background: transparent;
                     VerticalLayout {
+                        x: 0px;
+                        y: 0px;
+                        width: parent.width * 0.75 - 8px;
+                        height: parent.height;
                         alignment: center;
                         spacing: 0px;
                         Text {
@@ -411,6 +398,8 @@ export component Popup inherits Window {
                             font-weight: 600;
                             overflow: elide;
                             wrap: no-wrap;
+                            horizontal-alignment: left;
+                            width: 100%;
                             height: note.title == "" ? 0px : 18px;
                         }
                         Text {
@@ -418,6 +407,8 @@ export component Popup inherits Window {
                             color: Breeze.fg;
                             overflow: elide;
                             wrap: no-wrap;
+                            horizontal-alignment: left;
+                            width: 100%;
                             height: 18px;
                         }
                         Text {
@@ -425,8 +416,56 @@ export component Popup inherits Window {
                             color: Breeze.inactive;
                             overflow: elide;
                             wrap: no-wrap;
+                            horizontal-alignment: left;
+                            width: 100%;
                             font-size: root.ui-font-size * 0.85;
                             height: 16px;
+                        }
+                    }
+                    Rectangle {
+                        x: parent.width * 0.75;
+                        y: 0px;
+                        width: parent.width * 0.25;
+                        height: parent.height;
+                        background: transparent;
+                        clip: true;
+                        if note.has-image: Image {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            source: note.image;
+                            image-fit: cover;
+                        }
+                        if note.has-image: TouchArea {
+                            x: 0px;
+                            y: 16px;
+                            width: parent.width;
+                            height: parent.height - 16px;
+                            mouse-cursor: pointer;
+                            clicked => { root.open-shot(i); }
+                        }
+                    }
+                    Rectangle {
+                        x: parent.width - 16px;
+                        y: 0px;
+                        width: 16px;
+                        height: 16px;
+                        background: transparent;
+                        Text {
+                            text: "×";
+                            color: Breeze.inactive;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            width: 100%;
+                            height: 100%;
+                        }
+                        TouchArea {
+                            width: 100%;
+                            height: 100%;
+                            mouse-cursor: pointer;
+                            clicked => { root.dismiss-note(i); }
                         }
                     }
                 }

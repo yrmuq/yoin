@@ -1059,6 +1059,24 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
             let _ = std::process::Command::new("xdg-open").arg(path).spawn();
         }
     });
+    let app_x = ctx.app.clone();
+    let shell_x = ctx.shell.clone();
+    popup.on_dismiss_note(move |index| {
+        let removed = {
+            let mut app = app_x.borrow_mut();
+            let removed = notices::dismiss(&mut app.notes, index as usize);
+            if removed.is_some() {
+                notices::save(&app.notes);
+            }
+            removed
+        };
+        if let Some(path) = removed {
+            notices::forget(std::slice::from_ref(&path));
+            if let Some(popup) = popup_of(&shell_x) {
+                refresh_popup(&app_x, &popup);
+            }
+        }
+    });
 }
 
 fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Settings, up: bool) {
