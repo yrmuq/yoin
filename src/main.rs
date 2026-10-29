@@ -166,7 +166,10 @@ fn main() {
         }
         while let Ok(ev) = ev_rx.try_recv() {
             match ev {
-                ClientEv::Status(id) => note_status(&ctx_timer, ctx_timer.app.borrow().catalog.tr(id)),
+                ClientEv::Status(id) => {
+                    let text = ctx_timer.app.borrow().catalog.tr(id);
+                    note_status(&ctx_timer, text);
+                }
                 ClientEv::StatusText(text) => note_status(&ctx_timer, text),
                 ClientEv::Registered(webhook) => {
                     ctx_timer.app.borrow_mut().cfg.webhook_id = webhook;
@@ -362,7 +365,8 @@ fn toggle_popup(ctx: &Ctx) -> bool {
     ctx.app.borrow_mut().popup_open = true;
     if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
         ctx.app.borrow_mut().place_warned = true;
-        note_status(ctx, ctx.app.borrow().catalog.tr(23));
+        let text = ctx.app.borrow().catalog.tr(23);
+        note_status(ctx, text);
     }
     true
 }
