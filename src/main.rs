@@ -679,7 +679,7 @@ fn lock_settings(settings: &Settings) {
 }
 
 fn apply_header_icons(popup: &Popup) {
-    if let Some(icon) = icons::theme_icon("open-link") {
+    if let Some(icon) = icons::theme_icon("akonadi-phone-home") {
         popup.set_icon_open(icon.image);
         popup.set_tint_open(icon.tint);
     }

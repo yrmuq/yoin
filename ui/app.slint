@@ -477,31 +477,25 @@ export component Notices inherits Window {
         height: root.notice-h;
         visible: root.notice-h > 1px;
         opacity: 1 - Math.min(root.slide / Math.max(root.notice-h, 1px), 1);
-        background: Breeze.window;
-        border-radius: Breeze.radius;
-        border-width: 1px;
-        border-color: Breeze.frame;
+        background: transparent;
         clip: true;
         VerticalLayout {
             padding: root.pad;
-            spacing: 0px;
-            for note[i] in root.notices: VerticalLayout {
-                spacing: 0px;
-                if i > 0: Rectangle {
-                    height: root.note-rule;
-                    background: Breeze.frame;
-                }
+            spacing: root.note-rule;
+            for note[i] in root.notices: Rectangle {
+                height: root.note-row;
+                clip: true;
+                background: transparent;
+                property <float> shift: (1 - note.fade) * (1 - note.fade) * (1 - note.fade);
                 Rectangle {
+                    y: root.note-row * shift;
+                    width: parent.width;
                     height: root.note-row;
-                    width: 100%;
-                    clip: true;
-                    background: transparent;
-                    Rectangle {
-                        y: root.note-row * (1 - note.fade) * (1 - note.fade) * (1 - note.fade);
-                        width: parent.width;
-                        height: root.note-row;
-                        opacity: 1 - (1 - note.fade) * (1 - note.fade) * (1 - note.fade);
-                        background: transparent;
+                    opacity: 1 - shift;
+                    background: Breeze.window;
+                    border-radius: Breeze.radius;
+                    border-width: 1px;
+                    border-color: Breeze.frame;
                     VerticalLayout {
                         x: 0px;
                         width: parent.width * 0.75 - 8px;
@@ -578,7 +572,6 @@ export component Notices inherits Window {
                             mouse-cursor: pointer;
                             clicked => { root.dismiss-note(i); }
                         }
-                    }
                     }
                 }
             }

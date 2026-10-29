@@ -69,7 +69,10 @@ pub struct ThemeIcon {
 
 pub fn button_icon(kind: &str, on: bool) -> Option<ThemeIcon> {
     for name in icon_candidates(kind, on) {
-        if let Some(icon) = theme_icon(name) {
+        if let Some(mut icon) = theme_icon(name) {
+            if *name == "reverse" {
+                icon.image = turn_on_side(icon.image);
+            }
             return Some(icon);
         }
     }
@@ -274,6 +277,28 @@ fn should_tint(path: &Path) -> bool {
     colors.len() <= 1
 }
 
+fn turn_on_side(image: slint::Image) -> slint::Image {
+    let Some(buffer) = image.to_rgba8() else { return image };
+    let width = buffer.width();
+    let height = buffer.height();
+    if width == 0 || height == 0 {
+        return image;
+    }
+    let src = buffer.as_bytes();
+    let mut dst = vec![0u8; src.len()];
+    for y in 0..height {
+        for x in 0..width {
+            let nx = height - 1 - y;
+            let ny = x;
+            let from = ((y * width + x) * 4) as usize;
+            let to = ((ny * height + nx) * 4) as usize;
+            dst[to..to + 4].copy_from_slice(&src[from..from + 4]);
+        }
+    }
+    let turned = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&dst, height, width);
+    slint::Image::from_rgba8(turned)
+}
+
 fn load_slint_image(path: &Path) -> Option<slint::Image> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.starts_with(b"\x89PNG") {
@@ -332,6 +357,16 @@ mod tests {
         std::fs::write(&file, "<svg><path fill=\"#ff0000\"/><path fill=\"#00ff00\"/></svg>").unwrap();
         assert!(!should_tint(&file));
         let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn sideways_icon_turns_clockwise() {
+        let mut pixels = vec![0u8; 2 * 2 * 4];
+        pixels[0] = 10;
+        let image = slint::Image::from_rgba8(slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(&pixels, 2, 2));
+        let turned = turn_on_side(image).to_rgba8().unwrap();
+        assert_eq!(turned.width(), 2);
+        assert_eq!(turned.as_bytes()[4], 10);
     }
 
     #[test]
