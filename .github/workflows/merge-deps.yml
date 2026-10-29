@@ -1,6 +1,6 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Squash-merge Dependabot after the unit tests pass.
+# Squash-merge Dependabot after the Rust tests pass.
 
 name: Merge dependency PRs
 
@@ -15,12 +15,19 @@ permissions:
 jobs:
   merge:
     if: github.actor == 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
 
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev
+
       - name: Test
-        run: python3 -m unittest discover -s tests
+        run: cargo test
 
       - name: Merge
         env:
