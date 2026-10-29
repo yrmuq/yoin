@@ -99,11 +99,28 @@ component ToolButton inherits Rectangle {
     }
 }
 
-component BreezeIcon inherits Image {
+component BreezeIcon inherits Rectangle {
+    in property <image> source;
+    in property <bool> tint: true;
     in property <color> ink;
     width: 22px;
     height: 22px;
-    colorize: ink;
+    background: transparent;
+    if root.tint: Image {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        colorize: root.ink;
+    }
+    if !root.tint: Image {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+    }
 }
 
 component SizeSlider inherits Rectangle {
@@ -305,6 +322,12 @@ export component Popup inherits Window {
     callback configure();
     callback open-home();
     callback pin-toggled();
+    in-out property <image> icon-open: @image-url("icons/open-link.svg");
+    in-out property <image> icon-configure: @image-url("icons/configure.svg");
+    in-out property <image> icon-pin: @image-url("icons/window-pin.svg");
+    in-out property <bool> tint-open: true;
+    in-out property <bool> tint-configure: true;
+    in-out property <bool> tint-pin: true;
     property <length> gap: 6px;
     property <length> pad: 8px;
     property <length> tile: root.button-size * 2.05;
@@ -337,19 +360,20 @@ export component Popup inherits Window {
                 ToolButton {
                     x: 0px;
                     clicked => { root.open-home(); }
-                    BreezeIcon { source: @image-url("icons/open-link.svg"); ink: Breeze.fg; }
+                    BreezeIcon { source: root.icon-open; tint: root.tint-open; ink: Breeze.fg; }
                 }
                 ToolButton {
                     x: parent.width - 68px;
                     clicked => { root.configure(); }
-                    BreezeIcon { source: @image-url("icons/configure.svg"); ink: Breeze.fg; }
+                    BreezeIcon { source: root.icon-configure; tint: root.tint-configure; ink: Breeze.fg; }
                 }
                 pin-btn := ToolButton {
                     x: parent.width - 32px;
                     active: root.pinned;
                     clicked => { root.pin-toggled(); }
                     BreezeIcon {
-                        source: @image-url("icons/window-pin.svg");
+                        source: root.icon-pin;
+                        tint: root.tint-pin;
                         ink: pin-btn.active ? Breeze.selection-fg : Breeze.fg;
                     }
                 }
@@ -442,6 +466,10 @@ export component Settings inherits Window {
     callback size-changed(float);
     preferred-width: 560px;
     preferred-height: 640px;
+    min-width: 560px;
+    max-width: 560px;
+    min-height: 640px;
+    max-height: 640px;
     background: Breeze.window;
     VerticalBox {
         padding: 12px;

@@ -40,6 +40,7 @@ struct App {
     names: Vec<Entity>,
     dark: bool,
     popup_open: bool,
+    closing: bool,
     popup_focused: bool,
     popup_seen_focus: bool,
     close_popup: bool,
@@ -126,6 +127,7 @@ fn main() {
             names: Vec::new(),
             dark: false,
             popup_open: false,
+            closing: false,
             popup_focused: false,
             popup_seen_focus: false,
             close_popup: false,
@@ -315,6 +317,7 @@ fn ensure_settings(ctx: &Ctx) -> Settings {
         settings.set_status(ctx.app.borrow().status.clone().into());
     }
     wire_settings(ctx, &settings);
+    lock_settings(&settings);
     settings
 }
 
@@ -365,6 +368,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     ctx.shell.borrow_mut().popup = Some(popup.clone_strong());
     paint_theme(ctx);
     refresh_popup(&ctx.app, &popup);
+    apply_header_icons(&popup);
     wire_popup(ctx, &popup);
     popup
 }
@@ -412,15 +416,66 @@ fn sharpen_popup(popup: &Popup) -> bool {
 }
 
 fn hide_popup(ctx: &Ctx) {
+    if ctx.app.borrow().closing {
+        return;
+    }
+    let Some(popup) = popup_of(&ctx.shell) else {
+        finish_hide(ctx, None);
+        return;
+    };
+    if !ctx.app.borrow().popup_open {
+        popup.hide().ok();
+        finish_hide(ctx, None);
+        return;
+    }
+    ctx.app.borrow_mut().closing = true;
+    ctx.app.borrow_mut().close_popup = false;
+    slide_closed(ctx, &popup);
+}
+
+fn slide_closed(ctx: &Ctx, popup: &Popup) {
     if let Some(timer) = ctx.shell.borrow().slide_timer.clone() {
         timer.stop();
     }
-    if let Some(popup) = popup_of(&ctx.shell) {
-        popup.set_slide(0.0);
+    let from = popup.get_slide();
+    let target = popup.get_layout_height().max(from);
+    if target < 2.0 {
+        finish_hide(ctx, Some(popup));
+        return;
+    }
+    let weak = popup.as_weak();
+    let ctx_tick = ctx_from(ctx);
+    let start = Rc::new(Cell::new(None::<Instant>));
+    let timer = Rc::new(slint::Timer::default());
+    let tick = timer.clone();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+        let Some(popup) = weak.upgrade() else {
+            tick.stop();
+            return;
+        };
+        if start.get().is_none() {
+            start.set(Some(Instant::now()));
+        }
+        let elapsed = start.get().map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
+        let t = (elapsed / 0.18).min(1.0);
+        let ease = t * t * t;
+        popup.set_slide(from + (target - from) * ease);
+        if t >= 1.0 {
+            popup.set_slide(target);
+            tick.stop();
+            finish_hide(&ctx_tick, Some(&popup));
+        }
+    });
+    ctx.shell.borrow_mut().slide_timer = Some(timer);
+}
+
+fn finish_hide(ctx: &Ctx, popup: Option<&Popup>) {
+    if let Some(popup) = popup {
         popup.hide().ok();
     }
     let mut app = ctx.app.borrow_mut();
     app.popup_open = false;
+    app.closing = false;
     app.popup_focused = false;
     app.popup_seen_focus = false;
     app.close_popup = false;
@@ -463,11 +518,13 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
 fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
     settings.show().ok();
+    lock_settings(settings);
     raise_settings(settings);
     let weak = settings.as_weak();
     let kick = slint::Timer::default();
     kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
+            lock_settings(&settings);
             raise_settings(&settings);
         }
     });
@@ -481,6 +538,31 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
     let mut shell = ctx.shell.borrow_mut();
     shell.raise_timer = Some(kick);
     shell.title_timer = Some(back);
+}
+
+fn lock_settings(settings: &Settings) {
+    let _ = settings.window().with_winit_window(|window| {
+        let logical = winit::dpi::LogicalSize::new(560.0, 640.0);
+        let _ = window.request_inner_size(logical);
+        window.set_resizable(false);
+        window.set_min_inner_size(Some(logical));
+        window.set_max_inner_size(Some(logical));
+    });
+}
+
+fn apply_header_icons(popup: &Popup) {
+    if let Some(icon) = icons::theme_icon("open-link") {
+        popup.set_icon_open(icon.image);
+        popup.set_tint_open(icon.tint);
+    }
+    if let Some(icon) = icons::theme_icon("configure") {
+        popup.set_icon_configure(icon.image);
+        popup.set_tint_configure(icon.tint);
+    }
+    if let Some(icon) = icons::theme_icon("window-pin") {
+        popup.set_icon_pin(icon.image);
+        popup.set_tint_pin(icon.tint);
+    }
 }
 
 fn raise_settings(settings: &Settings) {
