@@ -82,9 +82,12 @@ component ToolButton inherits Rectangle {
     height: 26px;
     border-radius: Breeze.radius;
     background: active ? Breeze.selection : (hover.has-hover ? Breeze.button-hover : transparent);
-    HorizontalLayout {
+    VerticalLayout {
         alignment: center;
-        @children
+        HorizontalLayout {
+            alignment: center;
+            @children
+        }
     }
     hover := TouchArea {
         mouse-cursor: pointer;
@@ -135,6 +138,18 @@ component GearGlyph inherits Path {
     commands: "M 2 4.2 H 14 M 2 8 H 14 M 2 11.8 H 14 M 5 2.8 V 5.6 M 10.6 6.6 V 9.4 M 7 10.4 V 13.2";
 }
 
+component CheckGlyph inherits Path {
+    in property <color> ink;
+    width: 14px;
+    height: 14px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    stroke: ink;
+    stroke-width: 1.6px;
+    fill: transparent;
+    commands: "M 3.2 8.4 L 6.5 11.6 L 12.8 4.2";
+}
+
 component PencilGlyph inherits Path {
     in property <color> ink;
     width: 14px;
@@ -159,16 +174,25 @@ component PopupButton inherits Rectangle {
     property <bool> hovered: touch.has-hover;
     border-color: on || hovered ? Breeze.selection : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
+    property <length> icon-side: Math.min(20px, root.button-height * 0.46);
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
         spacing: 8px;
-        alignment: center;
-        KindIcon {
-            kind: root.kind;
-            ink: root.on ? Breeze.selection-fg : Breeze.fg;
-            width: Math.min(20px, root.button-height * 0.46);
-            height: self.width;
+        Rectangle {
+            width: root.icon-side;
+            height: 100%;
+            vertical-stretch: 1;
+            background: transparent;
+            VerticalLayout {
+                alignment: center;
+                KindIcon {
+                    kind: root.kind;
+                    ink: root.on ? Breeze.selection-fg : Breeze.fg;
+                    width: root.icon-side;
+                    height: root.icon-side;
+                }
+            }
         }
         Label {
             text: root.label;
@@ -197,21 +221,27 @@ component TileButton inherits Rectangle {
     property <bool> hovered: touch.has-hover;
     border-color: on || hovered ? Breeze.selection : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
+    property <length> icon-side: Math.max(16px, root.side * 0.32);
     VerticalLayout {
         alignment: center;
         spacing: 4px;
         padding: 6px;
-        KindIcon {
-            kind: root.kind;
-            ink: root.on ? Breeze.selection-fg : Breeze.fg;
-            width: Math.max(16px, root.side * 0.32);
-            height: self.width;
+        HorizontalLayout {
+            alignment: center;
+            width: 100%;
+            KindIcon {
+                kind: root.kind;
+                ink: root.on ? Breeze.selection-fg : Breeze.fg;
+                width: root.icon-side;
+                height: root.icon-side;
+            }
         }
         Label {
             text: root.label;
             color: root.on ? Breeze.selection-fg : Breeze.fg;
             wrap: word-wrap;
             overflow: elide;
+            width: 100%;
             horizontal-alignment: center;
             font-size: Math.max(9px, root.side * 0.15);
             height: root.side * 0.34;
@@ -273,22 +303,24 @@ export component Popup inherits Window {
         VerticalLayout {
             padding: root.pad;
             spacing: 4px;
-            HorizontalLayout {
-                spacing: 2px;
-                alignment: center;
-                home := ToolButton {
+            Rectangle {
+                height: 26px;
+                background: transparent;
+                ToolButton {
+                    x: 0px;
                     clicked => { root.open-home(); }
                     LinkGlyph { ink: Breeze.fg; }
                 }
-                Rectangle { horizontal-stretch: 1; background: transparent; }
+                ToolButton {
+                    x: parent.width - 54px;
+                    clicked => { root.configure(); }
+                    GearGlyph { ink: Breeze.fg; }
+                }
                 pin-btn := ToolButton {
+                    x: parent.width - 26px;
                     active: root.pinned;
                     clicked => { root.pin-toggled(); }
                     PinGlyph { ink: pin-btn.active ? Breeze.selection-fg : Breeze.fg; active: root.pinned; }
-                }
-                ToolButton {
-                    clicked => { root.configure(); }
-                    GearGlyph { ink: Breeze.fg; }
                 }
             }
             if !root.tiles: VerticalLayout {
@@ -426,37 +458,73 @@ export component Settings inherits Window {
                             spacing: 4px;
                             HorizontalLayout {
                                 spacing: 4px;
-                                alignment: center;
                                 combo := ComboBox {
                                     model: root.entity-names;
                                     current-index: row.index;
                                     horizontal-stretch: 1;
                                     selected => { root.pick(i, combo.current-index); }
                                 }
-                                edit-btn := Rectangle {
+                                Rectangle {
+                                    width: 28px;
+                                    background: transparent;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        edit-btn := Rectangle {
                                     width: 28px;
                                     height: 28px;
                                     border-radius: Breeze.radius;
                                     border-width: 1px;
                                     border-color: row.editing ? Breeze.selection : Breeze.frame;
                                     background: row.editing ? Breeze.selection : (edit-touch.has-hover ? Breeze.button-hover : Breeze.button);
-                                    HorizontalLayout {
+                                    VerticalLayout {
                                         alignment: center;
-                                        PencilGlyph { ink: row.editing ? Breeze.selection-fg : Breeze.fg; }
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            PencilGlyph { ink: row.editing ? Breeze.selection-fg : Breeze.fg; }
+                                        }
                                     }
                                     edit-touch := TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => { root.edit(i); }
+                                    }
+                                        }
                                     }
                                 }
                                 Button { text: "↑"; clicked => { root.up(i); } }
                                 Button { text: "↓"; clicked => { root.down(i); } }
                                 Button { text: "−"; clicked => { root.remove(i); } }
                             }
-                            if row.editing: LineEdit {
-                                text: row.label;
-                                placeholder-text: root.t-rename;
-                                edited(text) => { root.rename(i, text); }
+                            if row.editing: rename-row := Rectangle {
+                                property <string> draft: row.label;
+                                background: transparent;
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    name := LineEdit {
+                                        text <=> rename-row.draft;
+                                        placeholder-text: root.t-rename;
+                                        horizontal-stretch: 1;
+                                        accepted(text) => { root.rename(i, text); }
+                                    }
+                                    check := Rectangle {
+                                        width: 28px;
+                                        height: 28px;
+                                        border-radius: Breeze.radius;
+                                        border-width: 1px;
+                                        border-color: Breeze.selection;
+                                        background: check-touch.has-hover ? Breeze.selection : Breeze.button;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            HorizontalLayout {
+                                                alignment: center;
+                                                CheckGlyph { ink: check-touch.has-hover ? Breeze.selection-fg : Breeze.fg; }
+                                            }
+                                        }
+                                        check-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.rename(i, name.text); }
+                                        }
+                                    }
+                                }
                             }
                         }
                         if rows.length < 10: Button {
