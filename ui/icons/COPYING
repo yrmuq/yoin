@@ -1,0 +1,12 @@
+The icons in this directory are from the KDE Breeze Icon Theme.
+
+Copyright (C) 2014 Uri Herrera <uri_herrera@nitrux.in> and others
+open-link.svg: Copyright (C) 2024 Carl Schwan <carl@carlschwan.eu>
+
+open-link.svg is licensed under LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL.
+The other icons are licensed under LGPL-3.0-or-later.
+
+Source: https://invent.kde.org/frameworks/breeze-icons
+icons/actions/22/open-link.svg
+icons/actions/22/configure.svg
+icons/actions/22/window-pin.svg

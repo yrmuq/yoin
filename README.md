@@ -14,7 +14,7 @@
 ---
 
 > [!NOTE]
-> **Active development:** `yoin` is still in active development. `x86_64` AppImage builds are on the [Releases](https://github.com/yrmuq/yoin/releases) page.
+> **Active development:** `yoin` is still in active development. This branch (`dev`) is the Rust port: `ksni` for the tray and `slint` for the windows, with no Qt. A manual run of the `Rust AppImage` action on `dev` publishes `yoin X.Y.0`. `x86_64` AppImage builds are on the [Releases](https://github.com/yrmuq/yoin/releases) page.
 >
 > **Releases:** `X.Y.0` is a manual release. Later patch numbers are automatic dependency prereleases, cut on Friday, and the patch resets when the minor number changes.
 >
@@ -62,7 +62,7 @@ data:
 
 ### AppImage
 
-The pre-release `AppImage` bundles `Python` and `PySide6`. It does not bundle a browser. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yoin/releases) page.
+The pre-release `AppImage` is a Rust binary. It does not bundle Qt, Python, or a browser. Download the latest `.AppImage` from the [Releases](https://github.com/yrmuq/yoin/releases) page.
 
 For a menu entry, use `Gear Lever` ([Flathub](https://flathub.org/apps/it.mijorus.gearlever)).
 
@@ -81,17 +81,14 @@ If the host system lacks `FUSE` support, extract and run the bundle directly:
 
 ### Flatpak
 
-`Flatpak` packaging is in `packaging/flatpak/` and is planned for a future stable release. It is not published. `arm64` waits for the same release.
+`Flatpak` packaging is in `packaging/flatpak/` and is planned for a future stable release. The manifest there still describes the Python build, and it is not published. `arm64` waits for the same release.
 
 ### From source
 
-`PySide6` and a Plasma session with a tray. The program talks to StatusNotifier through Qt, which is what Plasma shows.
+Rust 1.80 or newer, a C compiler, and the Wayland, xkbcommon, fontconfig, OpenGL, and EGL headers. The tray is `ksni`. The windows are `slint` with the FemtoVG OpenGL renderer. The AppImage does not bundle the GPU driver. Qt is not used.
 
 ```sh
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-python -m yoin
+cargo run --release
 ```
 
 ---

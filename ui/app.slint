@@ -1,0 +1,636 @@
+// Copyright (C) 2026 yrmuq
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, TabWidget, VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+export struct Face {
+    text: string,
+    on: bool,
+    kind: string,
+}
+
+export struct Choice {
+    index: int,
+    label: string,
+    editing: bool,
+}
+
+// Colors are filled from the active KDE scheme. Defaults are current Breeze Light.
+export global Breeze {
+    in-out property <bool> dark: false;
+    in-out property <color> window: #eff0f1;
+    in-out property <color> button: #fcfcfc;
+    in-out property <color> button-hover: #f6f6f7;
+    in-out property <color> fg: #232629;
+    in-out property <color> inactive: #707d8a;
+    in-out property <color> selection: #3daee9;
+    in-out property <color> selection-fg: #ffffff;
+    in-out property <color> frame: #c6c8c9;
+    // Breeze focusOutlineColor: 85% accent mixed with 15% text.
+    in-out property <color> outline: #399acc;
+    out property <length> radius: 5px;
+}
+
+export global Icons {
+    public pure function glyph(kind: string) -> string {
+        if (kind == "light") { return "M 8 2 L 5 6.2 L 6.2 11 H 9.8 L 11 6.2 Z M 6.4 12.3 H 9.6 M 7 13.8 H 9"; }
+        if (kind == "switch" || kind == "input_boolean") { return "M 1.6 6 H 14.4 V 10 H 1.6 Z M 9.4 6.7 H 13.1 V 9.3 H 9.4 Z"; }
+        if (kind == "lock") { return "M 4.4 7.2 H 11.6 V 14.2 H 4.4 Z M 6 7.2 V 4.8 H 10 V 7.2"; }
+        if (kind == "alarm_control_panel") { return "M 8 1.5 L 13.2 3.6 L 12.2 8.6 L 8 14.3 L 3.8 8.6 L 2.8 3.6 Z"; }
+        if (kind == "climate") { return "M 7 1.6 H 9 V 9 H 7 Z M 5.4 11.6 H 10.6 V 14.4 H 5.4 Z M 6.2 4 H 7 M 6.2 6.2 H 7"; }
+        if (kind == "water_heater" || kind == "humidifier") { return "M 8 1.6 L 3.6 9.2 L 5 13.8 H 11 L 12.4 9.2 Z"; }
+        if (kind == "cover") { return "M 2.2 2.2 H 13.8 V 13.8 H 2.2 Z M 2.2 5.4 H 13.8 M 2.2 8.4 H 13.8 M 2.2 11.4 H 13.8"; }
+        if (kind == "fan") { return "M 8 1.8 L 10.2 6.4 L 14.2 8 L 10.2 9.6 L 8 14.2 L 5.8 9.6 L 1.8 8 L 5.8 6.4 Z"; }
+        if (kind == "media_player") { return "M 2.4 3 H 13.6 V 11 H 2.4 Z M 6.4 5.4 L 10.6 7.5 L 6.4 9.6 Z M 6 12.6 H 10"; }
+        if (kind == "script") { return "M 3.4 1.8 H 9.4 L 12.8 5.2 V 14.2 H 3.4 Z M 9.4 1.8 V 5.2 H 12.8"; }
+        if (kind == "automation") { return "M 9.2 1.4 L 3.8 8.4 H 7.2 L 6.2 14.6 L 12.6 6.6 H 9 L 9.2 1.4"; }
+        if (kind == "siren") { return "M 5.4 14.2 H 10.6 M 6.2 14.2 V 9 H 9.8 V 14.2 M 3.8 8.4 H 12.2 L 10.2 3.4 H 5.8 Z"; }
+        if (kind == "remote") { return "M 5.2 1.5 H 10.8 V 14.5 H 5.2 Z M 6.8 4 H 9.2 V 5.4 H 6.8 Z M 6.8 7.2 H 9.2 V 8.6 H 6.8 Z M 6.8 10.2 H 9.2 V 11.6 H 6.8 Z"; }
+        if (kind == "valve") { return "M 2 8 H 14 M 8 8 V 14 M 4.4 3 H 11.6 L 8 8 Z"; }
+        if (kind == "group") { return "M 1.8 1.8 H 7 V 7 H 1.8 Z M 9 1.8 H 14.2 V 7 H 9 Z M 5.4 9 H 10.6 V 14.2 H 5.4 Z"; }
+        return "M 3 3 H 13 V 13 H 3 Z";
+    }
+}
+
+component Label inherits Text {
+    color: Breeze.fg;
+}
+
+component Hint inherits Text {
+    color: Breeze.inactive;
+    wrap: word-wrap;
+}
+
+component KindIcon inherits Rectangle {
+    in property <string> kind;
+    in property <color> ink;
+    background: transparent;
+    Path {
+        width: parent.width;
+        height: parent.height;
+        viewbox-width: 16;
+        viewbox-height: 16;
+        stroke: root.ink;
+        stroke-width: 1.35px;
+        fill: transparent;
+        commands: Icons.glyph(root.kind);
+    }
+}
+
+component ToolButton inherits Rectangle {
+    in property <bool> active: false;
+    callback clicked;
+    width: 32px;
+    height: 32px;
+    border-radius: Breeze.radius;
+    background: active ? Breeze.selection : (hover.has-hover ? Breeze.button-hover : transparent);
+    border-width: active ? 1px : 0;
+    border-color: Breeze.outline;
+    VerticalLayout {
+        alignment: center;
+        HorizontalLayout {
+            alignment: center;
+            @children
+        }
+    }
+    hover := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component BreezeIcon inherits Rectangle {
+    in property <image> source;
+    in property <bool> tint: true;
+    in property <color> ink;
+    width: 22px;
+    height: 22px;
+    background: transparent;
+    if root.tint: Image {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+        colorize: root.ink;
+    }
+    if !root.tint: Image {
+        x: 0px;
+        y: 0px;
+        width: parent.width;
+        height: parent.height;
+        source: root.source;
+    }
+}
+
+component SizeSlider inherits Rectangle {
+    in-out property <float> value: 40;
+    in property <float> minimum: 32;
+    in property <float> maximum: 80;
+    callback changed(float);
+    height: 22px;
+    min-width: 120px;
+    horizontal-stretch: 1;
+    property <length> knob: 16px;
+    property <float> span: Math.max(root.maximum - root.minimum, 1);
+    property <float> pos: Math.max(0, Math.min((root.value - root.minimum) / root.span, 1));
+    property <length> travel: Math.max(root.width - root.knob, 1px);
+    Rectangle {
+        x: 0px;
+        y: (parent.height - 4px) / 2;
+        height: 4px;
+        width: parent.width;
+        border-radius: 2px;
+        background: Breeze.frame;
+    }
+    Rectangle {
+        x: 0px;
+        y: (parent.height - 4px) / 2;
+        height: 4px;
+        width: root.pos * root.travel + root.knob / 2;
+        border-radius: 2px;
+        background: Breeze.selection;
+    }
+    Rectangle {
+        x: root.pos * root.travel;
+        y: (parent.height - root.knob) / 2;
+        width: root.knob;
+        height: root.knob;
+        border-radius: root.knob / 2;
+        background: Breeze.button;
+        border-width: 1px;
+        border-color: Breeze.outline;
+    }
+    area := TouchArea {
+        mouse-cursor: pointer;
+        moved => {
+            if (area.pressed) {
+                root.seek(area.mouse-x);
+            }
+        }
+        pointer-event(event) => {
+            if (event.kind == PointerEventKind.down) {
+                root.seek(area.mouse-x);
+            }
+            EventResult.accept
+        }
+    }
+    function seek(x: length) {
+        let t = Math.max(0, Math.min((x - root.knob / 2) / root.travel, 1));
+        let next = root.minimum + t * root.span;
+        root.value = next;
+        root.changed(next);
+    }
+}
+
+component CheckGlyph inherits Path {
+    in property <color> ink;
+    width: 14px;
+    height: 14px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    stroke: ink;
+    stroke-width: 1.6px;
+    fill: transparent;
+    commands: "M 3.2 8.4 L 6.5 11.6 L 12.8 4.2";
+}
+
+component PencilGlyph inherits Path {
+    in property <color> ink;
+    width: 14px;
+    height: 14px;
+    viewbox-width: 16;
+    viewbox-height: 16;
+    stroke: ink;
+    stroke-width: 1.3px;
+    fill: transparent;
+    commands: "M 11.2 2.2 L 13.6 4.6 L 5.4 12.8 L 2.6 13.4 L 3.2 10.6 Z M 9.6 3.8 L 12.2 6.4";
+}
+
+component PopupButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <string> kind;
+    in property <length> button-height: 40px;
+    callback clicked;
+    height: button-height;
+    border-radius: Breeze.radius;
+    border-width: 1px;
+    property <bool> hovered: touch.has-hover;
+    border-color: on || hovered ? Breeze.outline : Breeze.frame;
+    background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
+    property <length> icon-side: Math.min(20px, root.button-height * 0.46);
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        spacing: 8px;
+        Rectangle {
+            width: root.icon-side;
+            height: 100%;
+            vertical-stretch: 1;
+            background: transparent;
+            VerticalLayout {
+                alignment: center;
+                KindIcon {
+                    kind: root.kind;
+                    ink: root.on ? Breeze.selection-fg : Breeze.fg;
+                    width: root.icon-side;
+                    height: root.icon-side;
+                }
+            }
+        }
+        Label {
+            text: root.label;
+            color: root.on ? Breeze.selection-fg : Breeze.fg;
+            overflow: elide;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+component TileButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> on;
+    in property <string> kind;
+    in property <length> side: 84px;
+    callback clicked;
+    width: side;
+    height: side;
+    border-radius: Breeze.radius;
+    border-width: 1px;
+    property <bool> hovered: touch.has-hover;
+    border-color: on || hovered ? Breeze.outline : Breeze.frame;
+    background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
+    property <length> icon-side: Math.max(16px, root.side * 0.32);
+    VerticalLayout {
+        alignment: center;
+        spacing: 4px;
+        padding: 6px;
+        HorizontalLayout {
+            alignment: center;
+            width: 100%;
+            KindIcon {
+                kind: root.kind;
+                ink: root.on ? Breeze.selection-fg : Breeze.fg;
+                width: root.icon-side;
+                height: root.icon-side;
+            }
+        }
+        Label {
+            text: root.label;
+            color: root.on ? Breeze.selection-fg : Breeze.fg;
+            wrap: word-wrap;
+            overflow: elide;
+            width: 100%;
+            horizontal-alignment: center;
+            font-size: Math.max(9px, root.side * 0.15);
+            height: root.side * 0.34;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component Popup inherits Window {
+    title: "yoin-buttons";
+    no-frame: true;
+    always-on-top: true;
+    in-out property <[Face]> faces;
+    in-out property <bool> dark: false;
+    in-out property <bool> tiles: false;
+    in-out property <bool> pinned: false;
+    in-out property <length> button-size: 40px;
+    in-out property <length> slide: 0px;
+    in-out property <string> ui-font-family: "Noto Sans";
+    in-out property <length> ui-font-size: 13.333px;
+    in-out property <int> ui-font-weight: 400;
+    default-font-family: ui-font-family;
+    default-font-size: ui-font-size;
+    default-font-weight: ui-font-weight;
+    changed dark => {
+        Breeze.dark = root.dark;
+        Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+    callback pressed(int);
+    callback configure();
+    callback open-home();
+    callback pin-toggled();
+    in-out property <image> icon-open: @image-url("icons/open-link.svg");
+    in-out property <image> icon-configure: @image-url("icons/configure.svg");
+    in-out property <image> icon-pin: @image-url("icons/window-pin.svg");
+    in-out property <bool> tint-open: true;
+    in-out property <bool> tint-configure: true;
+    in-out property <bool> tint-pin: true;
+    property <length> gap: 6px;
+    property <length> pad: 8px;
+    property <length> tile: root.button-size * 2.05;
+    property <int> cols: Math.min(3, Math.max(root.faces.length, 1));
+    property <int> tile-rows: Math.max(1, Math.ceil(root.faces.length * 1.0 / 3));
+    property <length> body-h: root.tiles
+        ? (tile-rows * tile + Math.max(tile-rows - 1, 0) * gap)
+        : (Math.max(root.faces.length, 1) * (root.button-size + gap) - gap);
+    out property <length> layout-width: root.width;
+    out property <length> layout-height: root.height;
+    width: root.tiles ? (pad * 2 + cols * tile + Math.max(cols - 1, 0) * gap) : 300px;
+    height: pad + 32px + 4px + body-h + pad;
+    background: transparent;
+    card := Rectangle {
+        y: root.slide;
+        width: parent.width;
+        height: parent.height;
+        opacity: 1 - Math.min(root.slide / Math.max(root.height, 1px), 1);
+        background: Breeze.window;
+        border-radius: Breeze.radius;
+        border-width: 1px;
+        border-color: Breeze.frame;
+        clip: true;
+        VerticalLayout {
+            padding: root.pad;
+            spacing: 4px;
+            Rectangle {
+                height: 32px;
+                background: transparent;
+                ToolButton {
+                    x: 0px;
+                    clicked => { root.open-home(); }
+                    BreezeIcon { source: root.icon-open; tint: root.tint-open; ink: Breeze.fg; }
+                }
+                ToolButton {
+                    x: parent.width - 68px;
+                    clicked => { root.configure(); }
+                    BreezeIcon { source: root.icon-configure; tint: root.tint-configure; ink: Breeze.fg; }
+                }
+                pin-btn := ToolButton {
+                    x: parent.width - 32px;
+                    active: root.pinned;
+                    clicked => { root.pin-toggled(); }
+                    BreezeIcon {
+                        source: root.icon-pin;
+                        tint: root.tint-pin;
+                        ink: pin-btn.active ? Breeze.selection-fg : Breeze.fg;
+                    }
+                }
+            }
+            if !root.tiles: VerticalLayout {
+                spacing: root.gap;
+                for face[i] in root.faces: PopupButton {
+                    label: face.text;
+                    on: face.on;
+                    kind: face.kind;
+                    button-height: root.button-size;
+                    clicked => { root.pressed(i); }
+                }
+            }
+            if root.tiles: Rectangle {
+                height: root.body-h;
+                background: transparent;
+                for face[i] in root.faces: TileButton {
+                    x: Math.mod(i, 3) * (root.tile + root.gap);
+                    y: Math.floor(i / 3) * (root.tile + root.gap);
+                    label: face.text;
+                    on: face.on;
+                    kind: face.kind;
+                    side: root.tile;
+                    clicked => { root.pressed(i); }
+                }
+            }
+        }
+    }
+}
+
+export component Settings inherits Window {
+    in-out property <string> caption: "yoin";
+    title: caption;
+    in-out property <bool> dark: false;
+    in-out property <string> ui-font-family: "Noto Sans";
+    in-out property <length> ui-font-size: 13.333px;
+    in-out property <int> ui-font-weight: 400;
+    default-font-family: ui-font-family;
+    default-font-size: ui-font-size;
+    default-font-weight: ui-font-weight;
+    changed dark => {
+        Breeze.dark = root.dark;
+        Palette.color-scheme = root.dark ? ColorScheme.dark : ColorScheme.light;
+    }
+    in-out property <string> address;
+    in-out property <string> token;
+    in-out property <string> device;
+    in-out property <bool> autostart;
+    in-out property <string> status;
+    in-out property <string> version;
+    in-out property <[string]> entity-names;
+    in-out property <[Choice]> rows;
+    in-out property <int> language-index;
+    in-out property <int> theme-index;
+    in-out property <int> layout-index;
+    in-out property <float> button-size-value: 40;
+    in-out property <[string]> language-names;
+    in-out property <[string]> theme-names;
+    in-out property <[string]> layout-names;
+    in-out property <string> t-connection;
+    in-out property <string> t-buttons;
+    in-out property <string> t-appearance;
+    in-out property <string> t-address;
+    in-out property <string> t-token;
+    in-out property <string> t-token-hint;
+    in-out property <string> t-device;
+    in-out property <string> t-device-hint;
+    in-out property <string> t-autostart;
+    in-out property <string> t-connect;
+    in-out property <string> t-save;
+    in-out property <string> t-language;
+    in-out property <string> t-theme;
+    in-out property <string> t-layout;
+    in-out property <string> t-size;
+    in-out property <string> t-size-hint;
+    in-out property <string> t-rename;
+    callback connect();
+    callback save();
+    callback add();
+    callback up(int);
+    callback down(int);
+    callback remove(int);
+    callback pick(int, int);
+    callback edit(int);
+    callback rename(int, string);
+    callback language(int);
+    callback theme(int);
+    callback layout(int);
+    callback size-changed(float);
+    preferred-width: 560px;
+    preferred-height: 640px;
+    min-width: 560px;
+    max-width: 560px;
+    min-height: 640px;
+    max-height: 640px;
+    background: Breeze.window;
+    VerticalBox {
+        padding: 12px;
+        spacing: 8px;
+        TabWidget {
+            vertical-stretch: 1;
+            Tab {
+                title: root.t-connection;
+                VerticalBox {
+                    alignment: start;
+                    padding: 8px;
+                    Label { text: root.t-address; }
+                    addr := LineEdit {
+                        text <=> root.address;
+                        placeholder-text: "http://homeassistant.local:8123";
+                    }
+                    Label { text: root.t-token; }
+                    LineEdit {
+                        text <=> root.token;
+                        placeholder-text: root.t-token-hint;
+                        input-type: password;
+                    }
+                    Label { text: root.t-device; }
+                    LineEdit { text <=> root.device; }
+                    Hint { text: root.t-device-hint; }
+                    CheckBox {
+                        text: root.t-autostart;
+                        checked <=> root.autostart;
+                    }
+                    HorizontalBox {
+                        Button { text: root.t-connect; clicked => { root.connect(); } }
+                        Button { text: root.t-save; clicked => { root.save(); } }
+                    }
+                    Hint { text: root.status; }
+                }
+            }
+            Tab {
+                title: root.t-buttons;
+                ScrollView {
+                    VerticalBox {
+                        alignment: start;
+                        padding: 8px;
+                        spacing: 6px;
+                        for row[i] in rows: VerticalLayout {
+                            spacing: 4px;
+                            HorizontalLayout {
+                                spacing: 4px;
+                                combo := ComboBox {
+                                    model: root.entity-names;
+                                    current-index: row.index;
+                                    horizontal-stretch: 1;
+                                    selected => { root.pick(i, combo.current-index); }
+                                }
+                                Rectangle {
+                                    width: 28px;
+                                    background: transparent;
+                                    VerticalLayout {
+                                        alignment: center;
+                                        edit-btn := Rectangle {
+                                    width: 28px;
+                                    height: 28px;
+                                    border-radius: Breeze.radius;
+                                    border-width: 1px;
+                                    border-color: row.editing ? Breeze.selection : Breeze.frame;
+                                    background: row.editing ? Breeze.selection : (edit-touch.has-hover ? Breeze.button-hover : Breeze.button);
+                                    VerticalLayout {
+                                        alignment: center;
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            PencilGlyph { ink: row.editing ? Breeze.selection-fg : Breeze.fg; }
+                                        }
+                                    }
+                                    edit-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.edit(i); }
+                                    }
+                                        }
+                                    }
+                                }
+                                Button { text: "↑"; clicked => { root.up(i); } }
+                                Button { text: "↓"; clicked => { root.down(i); } }
+                                Button { text: "−"; clicked => { root.remove(i); } }
+                            }
+                            if row.editing: rename-row := Rectangle {
+                                property <string> draft: row.label;
+                                background: transparent;
+                                HorizontalLayout {
+                                    spacing: 4px;
+                                    name := LineEdit {
+                                        text <=> rename-row.draft;
+                                        placeholder-text: root.t-rename;
+                                        horizontal-stretch: 1;
+                                        accepted(text) => { root.rename(i, text); }
+                                    }
+                                    check := Rectangle {
+                                        width: 28px;
+                                        height: 28px;
+                                        border-radius: Breeze.radius;
+                                        border-width: 1px;
+                                        border-color: Breeze.selection;
+                                        background: check-touch.has-hover ? Breeze.selection : Breeze.button;
+                                        VerticalLayout {
+                                            alignment: center;
+                                            HorizontalLayout {
+                                                alignment: center;
+                                                CheckGlyph { ink: check-touch.has-hover ? Breeze.selection-fg : Breeze.fg; }
+                                            }
+                                        }
+                                        check-touch := TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.rename(i, name.text); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if rows.length < 10: Button {
+                            text: "+";
+                            clicked => { root.add(); }
+                        }
+                    }
+                }
+            }
+            Tab {
+                title: root.t-appearance;
+                VerticalBox {
+                    alignment: start;
+                    padding: 8px;
+                    spacing: 6px;
+                    Label { text: root.t-language; }
+                    lang := ComboBox {
+                        model: root.language-names;
+                        current-index: root.language-index;
+                        selected => { root.language(lang.current-index); }
+                    }
+                    Label { text: root.t-theme; }
+                    theme := ComboBox {
+                        model: root.theme-names;
+                        current-index: root.theme-index;
+                        selected => { root.theme(theme.current-index); }
+                    }
+                    Label { text: root.t-layout; }
+                    lay := ComboBox {
+                        model: root.layout-names;
+                        current-index: root.layout-index;
+                        selected => { root.layout(lay.current-index); }
+                    }
+                    Label { text: root.t-size + ": " + Math.round(root.button-size-value); }
+                    size := SizeSlider {
+                        minimum: 32;
+                        maximum: 80;
+                        value <=> root.button-size-value;
+                        changed(v) => { root.size-changed(v); }
+                    }
+                    Hint { text: root.t-size-hint; }
+                }
+            }
+        }
+        Hint {
+            text: root.version;
+            horizontal-alignment: right;
+        }
+    }
+}
