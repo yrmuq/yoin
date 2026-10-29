@@ -229,6 +229,7 @@ fn main() {
                 ClientEv::Notify { title, message, image } => {
                     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
                     let open = ctx_timer.app.borrow().popup_open;
+                    let notes_up = notices_of(&ctx_timer.shell).is_some_and(|notes| notes.window().is_visible());
                     {
                         let mut app = ctx_timer.app.borrow_mut();
                         let dropped = notices::push(&mut app.notes, notices::Note {
@@ -236,7 +237,7 @@ fn main() {
                             message: message.clone(),
                             at,
                             image: String::new(),
-                            fade: if open { 0.0 } else { 1.0 },
+                            fade: if open && notes_up { 0.0 } else { 1.0 },
                             closing: false,
                         });
                         notices::forget(&dropped);
@@ -245,7 +246,7 @@ fn main() {
                     if let Some(_popup) = popup_of(&ctx_timer.shell) {
                         refresh_popup(&ctx_timer.app, &ctx_timer.shell);
                     }
-                    if open {
+                    if open && notes_up {
                         kick_notice_anim(&ctx_timer.app, &ctx_timer.shell);
                     }
                     let icon = icons::asset_path("icon.png");
@@ -523,7 +524,6 @@ fn hide_popup(ctx: &Ctx) {
     if ctx.app.borrow().closing {
         return;
     }
-    hide_notices(&ctx.shell);
     let Some(popup) = popup_of(&ctx.shell) else {
         finish_hide(ctx, None);
         return;
@@ -544,11 +544,14 @@ fn slide_closed(ctx: &Ctx, popup: &Popup) {
     }
     let from = popup.get_slide();
     let target = popup.get_layout_height().max(from);
-    if target < 2.0 {
+    let note_from = notices_of(&ctx.shell).map(|notes| notes.get_slide()).unwrap_or(0.0);
+    let note_target = notices_of(&ctx.shell).map(|notes| notes.get_notice_h().max(note_from)).unwrap_or(0.0);
+    if target < 2.0 && note_target < 2.0 {
         finish_hide(ctx, Some(popup));
         return;
     }
     let weak = popup.as_weak();
+    let shell = ctx.shell.clone();
     let ctx_tick = ctx_from(ctx);
     let start = Rc::new(Cell::new(None::<Instant>));
     let timer = Rc::new(slint::Timer::default());
@@ -564,10 +567,25 @@ fn slide_closed(ctx: &Ctx, popup: &Popup) {
         let elapsed = start.get().map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
         let t = (elapsed / 0.18).min(1.0);
         let ease = t * t * t;
-        popup.set_slide(from + (target - from) * ease);
+        if target >= 2.0 {
+            popup.set_slide(from + (target - from) * ease);
+        }
+        if note_target >= 2.0 {
+            if let Some(notes) = notices_of(&shell) {
+                notes.set_slide(note_from + (note_target - note_from) * ease);
+            }
+        }
         if t >= 1.0 {
-            popup.set_slide(target);
+            if target >= 2.0 {
+                popup.set_slide(target);
+            }
+            if note_target >= 2.0 {
+                if let Some(notes) = notices_of(&shell) {
+                    notes.set_slide(note_target);
+                }
+            }
             tick.stop();
+            ctx_tick.shell.borrow_mut().slide_timer = None;
             finish_hide(&ctx_tick, Some(&popup));
         }
     });
@@ -593,6 +611,7 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
     }
     let height = popup.get_layout_height();
     popup.set_slide(if height > 1.0 { height } else { 0.0 });
+    let shell = ctx.shell.clone();
     let weak = popup.as_weak();
     let start = Rc::new(Cell::new(None::<Instant>));
     let timer = Rc::new(slint::Timer::default());
@@ -612,10 +631,20 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
         let elapsed = start.get().map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
         let t = (elapsed / 0.18).min(1.0);
         let ease = 1.0 - (1.0 - t).powi(3);
-        popup.set_slide(height * (1.0 - ease));
+        let left = 1.0 - ease;
+        popup.set_slide(height * left);
+        if let Some(notes) = notices_of(&shell) {
+            if notes.window().is_visible() {
+                notes.set_slide(notes.get_notice_h().max(0.0) * left);
+            }
+        }
         if t >= 1.0 {
             popup.set_slide(0.0);
+            if let Some(notes) = notices_of(&shell) {
+                notes.set_slide(0.0);
+            }
             tick.stop();
+            shell.borrow_mut().slide_timer = None;
         }
     });
     ctx.shell.borrow_mut().slide_timer = Some(timer);
@@ -783,27 +812,32 @@ fn sync_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
             }
         }).collect();
         let notice_h = notice_block(&app.notes);
-        let show_notes = app.popup_open && !app.closing && notice_h > 1.0;
+        let show_notes = app.popup_open && notice_h > 1.0;
         (rows, notice_h, show_notes)
     };
-    present_notices(app, shell, &popup, rows, notice_h, show_notes);
+    let revealed = present_notices(app, shell, &popup, rows, notice_h, show_notes);
+    if revealed && popup.window().is_visible() && popup.get_slide() < 1.0 && shell.borrow().slide_timer.is_none() {
+        slide_notices_open(shell);
+    }
 }
 
-fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &Popup, rows: Vec<Notice>, notice_h: f32, show: bool) {
+fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &Popup, rows: Vec<Notice>, notice_h: f32, show: bool) -> bool {
     if !show {
         hide_notices(shell);
-        return;
+        return false;
     }
     let notices = ensure_notices(app, shell);
     let width = popup.get_layout_width();
     if (notices.get_pane_width() - width).abs() > 0.5 {
         notices.set_pane_width(width);
     }
+    let revealed = !notices.window().is_visible();
     notices.set_notice_h(notice_h);
     notices.set_notices(ModelRc::new(VecModel::from(rows)));
-    if notices.window().is_visible() {
-        return;
+    if !revealed {
+        return false;
     }
+    notices.set_slide(notice_h);
     notices.show().ok();
     let _ = notices.window().with_winit_window(|window| {
         window.set_title("yoin-notices");
@@ -811,6 +845,40 @@ fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &P
     let _ = popup.window().with_winit_window(|window| {
         window.focus_window();
     });
+    true
+}
+
+fn slide_notices_open(shell: &Rc<RefCell<Shell>>) {
+    let Some(notices) = notices_of(shell) else { return };
+    let height = notices.get_notice_h();
+    if height < 2.0 {
+        return;
+    }
+    notices.set_slide(height);
+    let weak = notices.as_weak();
+    let shell_tick = shell.clone();
+    let start = Rc::new(Cell::new(None::<Instant>));
+    let timer = Rc::new(slint::Timer::default());
+    let tick = timer.clone();
+    timer.start(slint::TimerMode::Repeated, Duration::from_millis(16), move || {
+        let Some(notices) = weak.upgrade() else {
+            tick.stop();
+            return;
+        };
+        if start.get().is_none() {
+            start.set(Some(Instant::now()));
+        }
+        let elapsed = start.get().map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
+        let t = (elapsed / 0.18).min(1.0);
+        let left = (1.0 - t).powi(3);
+        notices.set_slide(notices.get_notice_h().max(height) * left);
+        if t >= 1.0 {
+            notices.set_slide(0.0);
+            tick.stop();
+            shell_tick.borrow_mut().slide_timer = None;
+        }
+    });
+    shell.borrow_mut().slide_timer = Some(timer);
 }
 
 fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
@@ -885,12 +953,12 @@ fn wire_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, notices: &No
 }
 
 fn notice_block(notes: &[notices::Note]) -> f32 {
-    let span: f32 = notes.iter().map(|note| note.fade.clamp(0.0, 1.0)).sum();
-    if span <= 0.001 {
+    let count = notes.len();
+    if count == 0 {
         return 0.0;
     }
-    let rules = notes.len().saturating_sub(1) as f32;
-    16.0 + span * 62.0 + rules
+    let n = count as f32;
+    16.0 + n * 62.0 + (n - 1.0)
 }
 
 fn kick_notice_anim(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
@@ -924,10 +992,10 @@ fn step_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> bool {
                     changed = true;
                     continue;
                 }
-                state.notes[index].fade = (state.notes[index].fade - 0.22).max(0.0);
+                state.notes[index].fade = (state.notes[index].fade - (0.016 / 0.18)).max(0.0);
                 changed = true;
             } else if state.notes[index].fade < 1.0 {
-                state.notes[index].fade = if open { (state.notes[index].fade + 0.22).min(1.0) } else { 1.0 };
+                state.notes[index].fade = if open { (state.notes[index].fade + (0.016 / 0.18)).min(1.0) } else { 1.0 };
                 changed = true;
             }
             index += 1;

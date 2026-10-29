@@ -461,6 +461,7 @@ export component Notices inherits Window {
     }
     in-out property <[Notice]> notices;
     in-out property <length> notice-h: 0px;
+    in-out property <length> slide: 0px;
     in-out property <length> pane-width: 300px;
     property <length> pad: 8px;
     property <length> note-row: 62px;
@@ -471,10 +472,11 @@ export component Notices inherits Window {
     height: pad * 2 + 3 * note-row + 2px;
     background: transparent;
     Rectangle {
-        y: parent.height - root.notice-h;
+        y: parent.height - root.notice-h + root.slide;
         width: parent.width;
         height: root.notice-h;
         visible: root.notice-h > 1px;
+        opacity: 1 - Math.min(root.slide / Math.max(root.notice-h, 1px), 1);
         background: Breeze.window;
         border-radius: Breeze.radius;
         border-width: 1px;
@@ -490,10 +492,16 @@ export component Notices inherits Window {
                     background: Breeze.frame;
                 }
                 Rectangle {
-                    height: root.note-row * Math.max(note.fade, 0);
+                    height: root.note-row;
                     width: 100%;
-                    opacity: Math.max(note.fade, 0);
+                    clip: true;
                     background: transparent;
+                    Rectangle {
+                        y: root.note-row * (1 - note.fade) * (1 - note.fade) * (1 - note.fade);
+                        width: parent.width;
+                        height: root.note-row;
+                        opacity: 1 - (1 - note.fade) * (1 - note.fade) * (1 - note.fade);
+                        background: transparent;
                     VerticalLayout {
                         x: 0px;
                         width: parent.width * 0.75 - 8px;
@@ -570,6 +578,7 @@ export component Notices inherits Window {
                             mouse-cursor: pointer;
                             clicked => { root.dismiss-note(i); }
                         }
+                    }
                     }
                 }
             }

@@ -80,8 +80,7 @@ fn icon_candidates(kind: &str, on: bool) -> &'static [&'static str] {
     match (kind, on) {
         ("light", false) => &["flashlight-off", "brightness-low"],
         ("light", true) => &["flashlight-on", "brightness-high"],
-        ("switch" | "input_boolean", false) => &["switch-off", "media-playback-stop"],
-        ("switch" | "input_boolean", true) => &["switch-on", "media-playback-start"],
+        ("switch" | "input_boolean", _) => &["reverse"],
         ("lock", false) => &["object-locked", "system-lock-screen"],
         ("lock", true) => &["object-unlocked", "unlock"],
         ("alarm_control_panel", false) => &["security-low"],
@@ -336,8 +335,9 @@ mod tests {
     }
 
     #[test]
-    fn switch_uses_two_different_icons() {
-        assert_ne!(icon_candidates("switch", false), icon_candidates("switch", true));
+    fn switch_uses_the_reverse_icon() {
+        assert_eq!(icon_candidates("switch", false), &["reverse"]);
+        assert_eq!(icon_candidates("switch", true), icon_candidates("input_boolean", false));
         assert_ne!(icon_candidates("light", false)[0], icon_candidates("light", true)[0]);
     }
 }
