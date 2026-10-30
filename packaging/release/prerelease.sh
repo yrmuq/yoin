@@ -1,13 +1,14 @@
 #!/bin/sh
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Tag the next dependency prerelease. The caller has already tested this tree.
-# Old patch tags stay, so the number does not go back to 1.
+# Number the next dependency prerelease and tag it locally. The caller pushes
+# only after the AppImage build succeeds. Old tags stay, so the number climbs.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
+git fetch origin --tags --force
 file_ver="$(sed -n 's/^version = "\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)"/\1/p' Cargo.toml | head -n 1)"
 major="$(printf '%s\n' "$file_ver" | awk -F. '{ print $1 }')"
 minor="$(printf '%s\n' "$file_ver" | awk -F. '{ print $2 }')"
@@ -28,23 +29,14 @@ if git rev-parse -q --verify "refs/tags/v${new}" >/dev/null; then
     exit 1
 fi
 
-sed -i "s/^version = \"[0-9][0-9.]*\"/version = \"${new}\"/" Cargo.toml
-awk -v ver="$new" '
-    $0 == "name = \"yoin\"" { hit = 1 }
-    hit && /^version = / { sub(/"[^"]*"/, "\"" ver "\""); hit = 0 }
-    { print }
-' Cargo.lock > Cargo.lock.tmp
-mv Cargo.lock.tmp Cargo.lock
-
-notes='**Changes:**
-Dependency updates.'
+git diff origin/main -- Cargo.lock .github packaging/appimage/build.sh \
+    | python3 packaging/release/notes.py deps > notes.md
+python3 packaging/release/bump.py "$new"
 export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-github-actions[bot]}"
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
-git add Cargo.toml Cargo.lock
-git commit -m "Version ${new}." >&2
-git tag -a "v${new}" -m "$notes"
-git push --force origin HEAD:refs/heads/deps >&2
-git push origin "refs/tags/v${new}" >&2
+git add Cargo.toml Cargo.lock chit/lore.md
+git commit -m "Version ${new}."
+git -c core.commentChar=% tag -a "v${new}" -F notes.md
 printf '%s\n' "$new"

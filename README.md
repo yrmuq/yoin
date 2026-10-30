@@ -14,9 +14,7 @@
 ---
 
 > [!NOTE]
-> **Active development:** `yoin` is still in active development. This branch (`dev`) is the Rust port: `ksni` for the tray and `slint` for the windows, with no Qt. A manual run of the `Rust AppImage` action on `dev` publishes `yoin X.Y.0`. `x86_64` AppImage builds are on the [Releases](https://github.com/yrmuq/yoin/releases) page.
->
-> **Releases:** `X.Y.0` is a manual release. A Dependabot update does not land on `main`. It publishes the next patch prerelease and deletes the previous one. The patch number keeps climbing until that `deps` branch is merged, which resets nothing by itself. The patch resets when the minor number changes.
+> **Active development:** `yoin` is still in active development. `x86_64` AppImage builds are on the [Releases](https://github.com/yrmuq/yoin/releases) page.
 >
 > **Independent Project:** `yoin` is an independent project and is not affiliated with or endorsed by Home Assistant or the Open Home Foundation.
 
@@ -32,7 +30,7 @@
 
 ---
 
-## Controls
+## Controls & Shortcuts
 
 | Input | Action |
 | :--- | :--- |
@@ -81,20 +79,21 @@ If the host system lacks `FUSE` support, extract and run the bundle directly:
 
 ### Flatpak
 
-`Flatpak` packaging is in `packaging/flatpak/` and is planned for a future stable release. The manifest there still describes the Python build, and it is not published. `arm64` waits for the same release.
-
-### From source
-
-Rust 1.80 or newer, a C compiler, and the Wayland, xkbcommon, fontconfig, OpenGL, and EGL headers. The tray is `ksni`. The windows are `slint` with the FemtoVG OpenGL renderer. The AppImage does not bundle the GPU driver. Qt is not used.
-
-```sh
-cargo run --release
-```
+`Flatpak` packaging is planned for a future stable release.
 
 ---
 
-## License
+## License & Attribution
+
+### Repository License
 
 `yoin` is free software distributed under `GPL-3.0-or-later`. See `LICENSE` and `NOTICE`. Bundled `AppImage` component licenses are listed in `packaging/appimage/BUNDLED.txt`.
+
+### Third-Party Components
+
+| Component | Upstream | License | Integration Details |
+| --- | --- | --- | --- |
+| `slint` | [slint-ui/slint](https://github.com/slint-ui/slint) | `GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0` | The windows. FemtoVG draws them. Linked into the binary. |
+| `ksni` | [iovxw/ksni](https://github.com/iovxw/ksni) | `Unlicense` | The StatusNotifier tray icon. Linked into the binary. |
 
 *Copyright (C) 2026 yrmuq.*

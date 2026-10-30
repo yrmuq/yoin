@@ -1,12 +1,12 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Dependabot does not land on main. Each update replaces the previous
-# patch prerelease with the next number. Merge the deps branch after trying it.
+# Dependabot does not land on main. The pull request is closed. The commits
+# are on deps, as the next prerelease, for a manual merge into dev.
 
 name: Dependency prerelease
 
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened]
     branches: [main]
 
@@ -23,9 +23,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-
-      - name: Tags
-        run: git fetch origin --tags --force
+          fetch-tags: true
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -45,8 +43,8 @@ jobs:
           GIT_COMMITTER_NAME: github-actions[bot]
           GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
-          bash packaging/release/prerelease.sh > "$RUNNER_TEMP/prerelease.txt"
-          ver="$(tail -n 1 "$RUNNER_TEMP/prerelease.txt")"
+          git fetch origin main
+          ver="$(bash packaging/release/prerelease.sh | tail -n 1)"
           echo "version=${ver}" >> "$GITHUB_OUTPUT"
 
       - name: Build
@@ -61,23 +59,25 @@ jobs:
           major="$(printf '%s\n' "$ver" | awk -F. '{ print $1 }')"
           minor="$(printf '%s\n' "$ver" | awk -F. '{ print $2 }')"
           patch="$(printf '%s\n' "$ver" | awk -F. '{ print $3 }')"
-          git tag -l --format='%(contents)' "v${ver}" > notes.md
-          gh release create "v${ver}" dist/yoin-x86_64.AppImage \
-            --repo "$GITHUB_REPOSITORY" \
-            --prerelease \
-            --title "yoin ${ver}" \
-            --notes-file notes.md
+          git push --force origin HEAD:refs/heads/deps
+          git push origin "refs/tags/v${ver}"
+          bash packaging/release/publish.sh "v${ver}"
           gh release list --repo "$GITHUB_REPOSITORY" --limit 100 --json tagName,isPrerelease \
-            | jq -r '.[] | select(.isPrerelease) | .tagName' \
+            | python3 -c 'import json,sys; [print(i["tagName"]) for i in json.load(sys.stdin) if i["isPrerelease"]]' \
             | while read -r tag; do
                 case "$tag" in
                   "v${major}.${minor}."*) ;;
                   *) continue ;;
                 esac
                 old="$(printf '%s\n' "$tag" | awk -F. '{ print $3 }' | tr -cd '0-9')"
+                body="$(git tag -l --format='%(contents)' "$tag" || true)"
+                case "$body" in
+                  "Dependency updates."*) ;;
+                  *) continue ;;
+                esac
                 if [ -n "$old" ] && [ "$old" -gt 0 ] && [ "$old" -lt "$patch" ]; then
                   gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes
                 fi
               done
-          gh pr comment "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" \
-            --body "Prerelease [${ver}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${ver}) is ready to try. \`main\` is unchanged. Merge branch \`deps\` when it works."
+          gh pr close "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" \
+            --comment "Prerelease [${ver}](https://github.com/${GITHUB_REPOSITORY}/releases/tag/v${ver}) is ready to try. \`main\` was not changed. Merge branch \`deps\` into \`dev\` by hand. Do not merge this pull request into \`main\`."

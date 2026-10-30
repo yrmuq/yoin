@@ -8,7 +8,14 @@ ROOT="$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)"
 BUILD="$ROOT/packaging/appimage/build.sh"
 json="$(curl -fsSL --retry 3 -H "Accept: application/vnd.github+json" -H "User-Agent: yoin-pins" \
     https://api.github.com/repos/AppImage/appimagetool/releases/latest)"
-url="$(printf '%s\n' "$json" | jq -r '.assets[] | select(.name=="appimagetool-x86_64.AppImage") | .browser_download_url')"
+url="$(printf '%s\n' "$json" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+for asset in data.get("assets", []):
+    if asset.get("name") == "appimagetool-x86_64.AppImage":
+        print(asset.get("browser_download_url") or "")
+        break
+')"
 case "$url" in
     https://github.com/AppImage/appimagetool/releases/download/*/appimagetool-x86_64.AppImage) ;;
     *)

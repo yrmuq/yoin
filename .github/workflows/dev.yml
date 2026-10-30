@@ -1,9 +1,9 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Manual Rust AppImage from the dev branch.
+# Manual AppImage from the dev branch.
 # It updates the draft release "yoin dev" and does not replace an X.Y.0 release.
 
-name: Rust AppImage
+name: Development build
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          printf '%s\n' '**Changes:**' '' 'Development build from the dev branch. Not a public release.' > notes.md
+          printf '%s\n' 'Development build from dev. Not a release.' > notes.md
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
