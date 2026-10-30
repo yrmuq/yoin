@@ -59,6 +59,7 @@ struct Shell {
     settings: Option<Settings>,
     popup: Option<Popup>,
     slide_timer: Option<Rc<slint::Timer>>,
+    notice_slide: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
     notice_timer: Option<Rc<slint::Timer>>,
     notices: Option<Notices>,
@@ -149,6 +150,7 @@ fn main() {
             settings: None,
             popup: None,
             slide_timer: None,
+            notice_slide: None,
             raise_timer: None,
             notice_timer: None,
             notices: None,
@@ -542,6 +544,7 @@ fn slide_closed(ctx: &Ctx, popup: &Popup) {
     if let Some(timer) = ctx.shell.borrow().slide_timer.clone() {
         timer.stop();
     }
+    stop_notice_slide(&ctx.shell);
     let from = popup.get_slide();
     let target = popup.get_layout_height().max(from);
     let note_from = notices_of(&ctx.shell).map(|notes| notes.get_slide()).unwrap_or(0.0);
@@ -609,6 +612,7 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
     if let Some(timer) = ctx.shell.borrow().slide_timer.clone() {
         timer.stop();
     }
+    stop_notice_slide(&ctx.shell);
     let height = popup.get_layout_height();
     popup.set_slide(if height > 1.0 { height } else { 0.0 });
     let shell = ctx.shell.clone();
@@ -634,14 +638,16 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
         let left = 1.0 - ease;
         popup.set_slide(height * left);
         if let Some(notes) = notices_of(&shell) {
-            if notes.window().is_visible() {
+            if notes.window().is_visible() && !popup.get_notices_hidden() {
                 notes.set_slide(notes.get_notice_h().max(0.0) * left);
             }
         }
         if t >= 1.0 {
             popup.set_slide(0.0);
             if let Some(notes) = notices_of(&shell) {
-                notes.set_slide(0.0);
+                if !popup.get_notices_hidden() {
+                    notes.set_slide(0.0);
+                }
             }
             tick.stop();
             shell.borrow_mut().slide_timer = None;
@@ -826,12 +832,15 @@ fn sync_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
     };
     let revealed = present_notices(app, shell, &popup, rows, notice_h, show_notes);
     if revealed && popup.window().is_visible() && popup.get_slide() < 1.0 && shell.borrow().slide_timer.is_none() {
-        slide_notices_open(shell);
+        slide_notices(shell, true);
     }
 }
 
 fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &Popup, rows: Vec<Notice>, notice_h: f32, show: bool) -> bool {
     if !show {
+        if shell.borrow().notice_slide.is_some() {
+            return false;
+        }
         hide_notices(shell);
         return false;
     }
@@ -857,13 +866,35 @@ fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &P
     true
 }
 
-fn slide_notices_open(shell: &Rc<RefCell<Shell>>) {
+fn stop_notice_slide(shell: &RefCell<Shell>) {
+    if let Some(timer) = shell.borrow().notice_slide.clone() {
+        timer.stop();
+    }
+    shell.borrow_mut().notice_slide = None;
+}
+
+fn slide_notices(shell: &Rc<RefCell<Shell>>, open: bool) {
+    stop_notice_slide(shell);
     let Some(notices) = notices_of(shell) else { return };
-    let height = notices.get_notice_h();
-    if height < 2.0 {
+    if !notices.window().is_visible() {
         return;
     }
-    notices.set_slide(height);
+    let height = notices.get_notice_h().max(notices.get_slide());
+    if height < 2.0 {
+        if !open {
+            hide_notices(shell);
+        }
+        return;
+    }
+    let from = notices.get_slide();
+    let target = if open { 0.0 } else { height };
+    if (from - target).abs() < 1.0 {
+        notices.set_slide(target);
+        if !open {
+            hide_notices(shell);
+        }
+        return;
+    }
     let weak = notices.as_weak();
     let shell_tick = shell.clone();
     let start = Rc::new(Cell::new(None::<Instant>));
@@ -879,15 +910,20 @@ fn slide_notices_open(shell: &Rc<RefCell<Shell>>) {
         }
         let elapsed = start.get().map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0);
         let t = (elapsed / 0.18).min(1.0);
-        let left = (1.0 - t).powi(3);
-        notices.set_slide(notices.get_notice_h().max(height) * left);
+        let ease = if open { 1.0 - (1.0 - t).powi(3) } else { t * t * t };
+        let span = notices.get_notice_h().max(height);
+        let target = if open { 0.0 } else { span };
+        notices.set_slide(from + (target - from) * ease);
         if t >= 1.0 {
-            notices.set_slide(0.0);
+            notices.set_slide(target);
             tick.stop();
-            shell_tick.borrow_mut().slide_timer = None;
+            shell_tick.borrow_mut().notice_slide = None;
+            if !open {
+                hide_notices(&shell_tick);
+            }
         }
     });
-    shell.borrow_mut().slide_timer = Some(timer);
+    shell.borrow_mut().notice_slide = Some(timer);
 }
 
 fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
@@ -967,7 +1003,7 @@ fn notice_block(notes: &[notices::Note]) -> f32 {
         return 0.0;
     }
     let n = count as f32;
-    16.0 + n * 62.0 + (n - 1.0)
+    16.0 + n * 71.0 + (n - 1.0)
 }
 
 fn kick_notice_anim(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
@@ -1390,12 +1426,28 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     });
     let ctx_notes = ctx_from(ctx);
     popup.on_notices_toggled(move || {
+        let hide = !ctx_notes.app.borrow().cfg.notices_hidden;
         {
             let mut app = ctx_notes.app.borrow_mut();
-            app.cfg.notices_hidden = !app.cfg.notices_hidden;
+            app.cfg.notices_hidden = hide;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
-        refresh_popup(&ctx_notes.app, &ctx_notes.shell);
+        if let Some(popup) = popup_of(&ctx_notes.shell) {
+            popup.set_notices_hidden(hide);
+        }
+        if hide {
+            slide_notices(&ctx_notes.shell, false);
+            return;
+        }
+        stop_notice_slide(&ctx_notes.shell);
+        sync_notices(&ctx_notes.app, &ctx_notes.shell);
+        let popup_ready = popup_of(&ctx_notes.shell).is_some_and(|popup| {
+            popup.window().is_visible() && popup.get_slide() < 1.0 && ctx_notes.shell.borrow().slide_timer.is_none()
+        });
+        let parting = notices_of(&ctx_notes.shell).is_some_and(|notes| notes.window().is_visible() && notes.get_slide() > 1.0);
+        if popup_ready && parting && ctx_notes.shell.borrow().notice_slide.is_none() {
+            slide_notices(&ctx_notes.shell, true);
+        }
     });
 }
 
