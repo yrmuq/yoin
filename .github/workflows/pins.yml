@@ -54,11 +54,11 @@ jobs:
         run: |
           set -eu
           cargo test
-          git checkout -B deps/pins
+          git checkout -B pins
           git add packaging/appimage/build.sh
           git commit -m "Update the pinned appimagetool."
-          git push --force -u origin HEAD:deps/pins
-          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head deps/pins \
+          git push --force -u origin HEAD:pins
+          gh pr create --repo "$GITHUB_REPOSITORY" --base main --head pins \
             --title "Update the pinned appimagetool." \
             --body "Automatic pin update." || true
-          gh pr merge deps/pins --repo "$GITHUB_REPOSITORY" --squash --delete-branch
+          gh pr merge pins --repo "$GITHUB_REPOSITORY" --squash --delete-branch
