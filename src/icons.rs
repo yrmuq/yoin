@@ -67,12 +67,16 @@ pub struct ThemeIcon {
     pub tint: bool,
 }
 
-pub fn button_icon(kind: &str, on: bool) -> Option<ThemeIcon> {
+pub fn button_icon(kind: &str, on: bool, edge: u32) -> Option<ThemeIcon> {
     for name in icon_candidates(kind, on) {
-        if let Some(mut icon) = theme_icon(name) {
-            if *name == "reverse" {
+        if *name == "reverse" {
+            if let Some(mut icon) = raster_theme_icon(name, edge) {
                 icon.image = turn_on_side(icon.image);
+                return Some(icon);
             }
+            continue;
+        }
+        if let Some(icon) = theme_icon(name) {
             return Some(icon);
         }
     }
@@ -117,6 +121,22 @@ pub fn theme_icon(name: &str) -> Option<ThemeIcon> {
         .or_else(|| find_icon("hicolor", name, &mut seen))?;
     let tint = should_tint(&path);
     let image = load_slint_image(&path)?;
+    Some(ThemeIcon { image, tint })
+}
+
+fn raster_theme_icon(name: &str, edge: u32) -> Option<ThemeIcon> {
+    let mut seen = std::collections::HashSet::new();
+    let theme = icon_theme_name();
+    let path = find_icon(&theme, name, &mut seen)
+        .or_else(|| find_icon("breeze", name, &mut seen))
+        .or_else(|| find_icon("hicolor", name, &mut seen))?;
+    let tint = should_tint(&path);
+    let bytes = std::fs::read(&path).ok()?;
+    let image = if bytes.windows(4).any(|mark| mark == *b"<svg") || bytes.starts_with(b"<?xml") {
+        svg_image(&bytes, edge)?
+    } else {
+        load_slint_image(&path)?
+    };
     Some(ThemeIcon { image, tint })
 }
 
@@ -305,7 +325,7 @@ fn load_slint_image(path: &Path) -> Option<slint::Image> {
         return png_image(&bytes);
     }
     if bytes.windows(4).any(|mark| mark == *b"<svg") || bytes.starts_with(b"<?xml") {
-        return svg_image(&bytes);
+        return slint::Image::load_from_svg_data(&bytes).ok();
     }
     slint::Image::load_from_path(path).ok()
 }
@@ -331,11 +351,12 @@ fn png_image(bytes: &[u8]) -> Option<slint::Image> {
     Some(slint::Image::from_rgba8(buffer))
 }
 
-fn svg_image(bytes: &[u8]) -> Option<slint::Image> {
+fn svg_image(bytes: &[u8], edge: u32) -> Option<slint::Image> {
     let tree = resvg::usvg::Tree::from_data(bytes, &resvg::usvg::Options::default()).ok()?;
     let size = tree.size();
     let source = size.width().max(size.height()).max(1.0);
-    let scale = 64.0 / source;
+    // Draw at the size the screen will show, so the bitmap is not scaled afterwards.
+    let scale = edge.max(1) as f32 / source;
     let width = (size.width() * scale).ceil().max(1.0) as u32;
     let height = (size.height() * scale).ceil().max(1.0) as u32;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
@@ -352,11 +373,21 @@ mod tests {
     fn breeze_pin_is_one_color_and_rasterizes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui/icons/window-pin.svg");
         assert!(should_tint(&path));
-        assert!(svg_image(&std::fs::read(&path).unwrap()).is_some());
+        assert!(slint::Image::load_from_svg_data(&std::fs::read(&path).unwrap()).is_ok());
         let file = std::env::temp_dir().join("yoin-colored.svg");
         std::fs::write(&file, "<svg><path fill=\"#ff0000\"/><path fill=\"#00ff00\"/></svg>").unwrap();
         assert!(!should_tint(&file));
         let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn svg_raster_matches_the_requested_edge() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui/icons/window-pin.svg");
+        let bytes = std::fs::read(&path).unwrap();
+        let small = svg_image(&bytes, 32).unwrap().to_rgba8().unwrap();
+        let large = svg_image(&bytes, 80).unwrap().to_rgba8().unwrap();
+        assert_eq!(small.width().max(small.height()), 32);
+        assert_eq!(large.width().max(large.height()), 80);
     }
 
     #[test]

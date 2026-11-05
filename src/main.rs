@@ -435,9 +435,10 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     let focus = ctx_from(ctx);
     let _ = popup.window().on_winit_window_event(move |_window, event| {
         match event {
-            winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+            winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(popup) = weak.upgrade() {
                     let _ = sharpen_popup(&popup);
+                    refresh_popup_at(&focus.app, &focus.shell, *scale_factor as f32);
                 }
             }
             winit::event::WindowEvent::Focused(true) => {
@@ -475,7 +476,6 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     ctx.shell.borrow_mut().popup = Some(popup.clone_strong());
     paint_theme(ctx);
     refresh_popup(&ctx.app, &ctx.shell);
-    apply_header_icons(&popup);
     wire_popup(ctx, &popup);
     popup
 }
@@ -771,18 +771,41 @@ fn toggle_popup(ctx: &Ctx) -> bool {
     true
 }
 
+fn icon_px(logical: f32, scale: f32) -> u32 {
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+    (logical * scale).round().max(1.0) as u32
+}
+
+fn popup_scale(popup: &Popup) -> f32 {
+    let scale = popup.window().scale_factor();
+    if scale.is_finite() && scale > 0.0 { scale } else { 1.0 }
+}
+
 fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
     let Some(popup) = popup_of(shell) else { return };
+    refresh_popup_at(app, shell, popup_scale(&popup));
+}
+
+fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f32) {
+    let Some(popup) = popup_of(shell) else { return };
+    let scale = if scale.is_finite() && scale > 0.0 { scale } else { popup_scale(&popup) };
     let (faces, tiles, button_size, pinned, notices_hidden) = {
         let app = app.borrow();
         let unset = app.catalog.tr(12);
         let tiles = app.cfg.layout == "tiles";
+        let button = app.cfg.button_size as f32;
+        let logical = if tiles {
+            (button * 2.05 * 0.32).max(16.0)
+        } else {
+            20.0_f32.min(button * 0.46)
+        };
+        let edge = icon_px(logical, scale);
         let faces: Vec<Face> = app.cfg.buttons.iter().enumerate().map(|(index, id)| {
             let known = app.entities.get(id);
             let custom = app.cfg.labels.get(index).map(String::as_str).unwrap_or("");
             let on = ha::button_on(known);
             let kind = ha::entity_kind(id, known);
-            let icon = icons::button_icon(&kind, on);
+            let icon = icons::button_icon(&kind, on, edge);
             Face {
                 text: ha::tray_label(id, known, custom, &unset, tiles).into(),
                 on,
@@ -798,6 +821,7 @@ fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
     popup.set_button_size(button_size);
     popup.set_pinned(pinned);
     popup.set_notices_hidden(notices_hidden);
+    apply_header_icons(&popup);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
     sync_notices(app, shell);
 }
