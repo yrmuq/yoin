@@ -114,22 +114,14 @@ fn icon_candidates(kind: &str, on: bool) -> &'static [&'static str] {
 }
 
 pub fn theme_icon(name: &str) -> Option<ThemeIcon> {
-    let mut seen = std::collections::HashSet::new();
-    let theme = icon_theme_name();
-    let path = find_icon(&theme, name, &mut seen)
-        .or_else(|| find_icon("breeze", name, &mut seen))
-        .or_else(|| find_icon("hicolor", name, &mut seen))?;
+    let path = locate_icon(name)?;
     let tint = should_tint(&path);
     let image = load_slint_image(&path)?;
     Some(ThemeIcon { image, tint })
 }
 
 fn raster_theme_icon(name: &str, edge: u32) -> Option<ThemeIcon> {
-    let mut seen = std::collections::HashSet::new();
-    let theme = icon_theme_name();
-    let path = find_icon(&theme, name, &mut seen)
-        .or_else(|| find_icon("breeze", name, &mut seen))
-        .or_else(|| find_icon("hicolor", name, &mut seen))?;
+    let path = locate_icon(name)?;
     let tint = should_tint(&path);
     let bytes = std::fs::read(&path).ok()?;
     let image = if bytes.windows(4).any(|mark| mark == *b"<svg") || bytes.starts_with(b"<?xml") {
@@ -138,6 +130,33 @@ fn raster_theme_icon(name: &str, edge: u32) -> Option<ThemeIcon> {
         load_slint_image(&path)?
     };
     Some(ThemeIcon { image, tint })
+}
+
+fn locate_icon(name: &str) -> Option<PathBuf> {
+    let mut seen = std::collections::HashSet::new();
+    let theme = icon_theme_name();
+    find_icon(&theme, name, &mut seen)
+        .or_else(|| find_icon("breeze", name, &mut seen))
+        .or_else(|| find_icon("hicolor", name, &mut seen))
+}
+
+pub fn file_format(path: &Path) -> &'static str {
+    match path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()).as_deref() {
+        Some("svg") => "svg",
+        Some("png") => "png",
+        _ => "other",
+    }
+}
+
+pub fn describe_icon(name: &str) -> String {
+    match locate_icon(name) {
+        Some(path) => format!("{name} - {}", file_format(&path)),
+        None => format!("{name} - нет"),
+    }
+}
+
+pub fn chosen_icon_name(kind: &str, on: bool) -> Option<&'static str> {
+    icon_candidates(kind, on).iter().copied().find(|name| locate_icon(name).is_some())
 }
 
 fn icon_theme_name() -> String {
@@ -388,6 +407,13 @@ mod tests {
         let large = svg_image(&bytes, 80).unwrap().to_rgba8().unwrap();
         assert_eq!(small.width().max(small.height()), 32);
         assert_eq!(large.width().max(large.height()), 80);
+    }
+
+    #[test]
+    fn file_format_reads_the_extension() {
+        assert_eq!(file_format(Path::new("arrow-up.svg")), "svg");
+        assert_eq!(file_format(Path::new("/usr/share/icons/Papirus/22x22/actions/configure.PNG")), "png");
+        assert_eq!(file_format(Path::new("icon")), "other");
     }
 
     #[test]

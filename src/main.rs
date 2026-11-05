@@ -437,7 +437,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
         match event {
             winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(popup) = weak.upgrade() {
-                    let _ = sharpen_popup(&popup);
+                    sharpen_popup(&popup);
                     refresh_popup_at(&focus.app, &focus.shell, *scale_factor as f32);
                 }
             }
@@ -491,35 +491,17 @@ fn ctx_from(ctx: &Ctx) -> Ctx {
     }
 }
 
-fn sharpen_popup(popup: &Popup) -> bool {
-    let width = popup.get_layout_width();
-    let height = popup.get_layout_height();
-    if width < 2.0 || height < 2.0 {
-        return false;
-    }
-    let pending = popup.window().with_winit_window(|window| {
+fn sharpen_popup(popup: &Popup) {
+    let _ = popup.window().with_winit_window(|window| {
         let scale = window.scale_factor();
         if !scale.is_finite() || scale <= 0.0 {
-            return true;
+            return;
         }
         let snapped = (theme::system_font().size_px * scale as f32).round().max(1.0) / scale as f32;
         if (popup.get_ui_font_size() - snapped).abs() > 0.05 {
             popup.set_ui_font_size(snapped);
         }
-        let physical = window.inner_size();
-        let want_w = (width as f64 * scale).round() as u32;
-        let want_h = (height as f64 * scale).round() as u32;
-        // The Wayland window is often created before the scale arrives, so the
-        // buffer stays at 1x and the compositor stretches it. Asking again in
-        // logical pixels reallocates the buffer at the real scale.
-        if physical.width.abs_diff(want_w) > 1 || physical.height.abs_diff(want_h) > 1 {
-            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width as f64, height as f64));
-            return true;
-        }
-        false
-    }).unwrap_or(true);
-    popup.window().request_redraw();
-    pending
+    });
 }
 
 fn hide_popup(ctx: &Ctx) {
@@ -666,6 +648,9 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
             settings.set_ui_font_size(snapped);
         }
     });
+    if settings.get_dev_open() {
+        settings.set_dev_report(dev_icon_report(&ctx.app.borrow()).into());
+    }
     raise_settings(ctx, settings);
     let weak = settings.as_weak();
     let ctx_kick = ctx_from(ctx);
@@ -761,7 +746,7 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         window.set_title("yoin-buttons");
         window.focus_window();
     });
-    let _ = sharpen_popup(&popup);
+    sharpen_popup(&popup);
     start_slide(ctx, &popup);
     if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
         ctx.app.borrow_mut().place_warned = true;
@@ -1080,6 +1065,83 @@ fn step_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> bool {
         sync_notices(app, shell);
     }
     app.borrow().notes.iter().any(|note| note.closing || note.fade < 1.0)
+}
+
+fn version_burst(count: &mut u8, last: &mut Option<Instant>, now: Instant) -> bool {
+    if last.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_millis(2000)) {
+        *count = 0;
+    }
+    *last = Some(now);
+    *count = count.saturating_add(1);
+    if *count >= 5 {
+        *count = 0;
+        *last = None;
+        true
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod version_burst_tests {
+    use super::*;
+
+    #[test]
+    fn five_quick_taps_toggle_once() {
+        let start = Instant::now();
+        let mut count = 0;
+        let mut last = None;
+        for step in 0..4 {
+            assert!(!version_burst(&mut count, &mut last, start + Duration::from_millis(step * 200)));
+        }
+        assert!(version_burst(&mut count, &mut last, start + Duration::from_millis(800)));
+        assert_eq!(count, 0);
+        assert!(last.is_none());
+    }
+
+    #[test]
+    fn a_pause_starts_the_count_over() {
+        let start = Instant::now();
+        let mut count = 0;
+        let mut last = None;
+        assert!(!version_burst(&mut count, &mut last, start));
+        assert!(!version_burst(&mut count, &mut last, start + Duration::from_millis(2500)));
+        assert_eq!(count, 1);
+    }
+}
+
+fn dev_icon_report(app: &App) -> String {
+    let mut lines = Vec::new();
+    let mut seen = Vec::new();
+    for name in ["akonadi-phone-home", "configure", "window-pin", "arrow-up", "arrow-down"] {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        lines.push(icons::describe_icon(name));
+    }
+    for id in &app.cfg.buttons {
+        if id.is_empty() {
+            continue;
+        }
+        let known = app.entities.get(id);
+        let on = ha::button_on(known);
+        let kind = ha::entity_kind(id, known);
+        match icons::chosen_icon_name(&kind, on) {
+            Some(name) if !seen.contains(&name) => {
+                seen.push(name);
+                lines.push(icons::describe_icon(name));
+            }
+            Some(_) => {}
+            None => {
+                let line = format!("{kind} - нет");
+                if !lines.contains(&line) {
+                    lines.push(line);
+                }
+            }
+        }
+    }
+    lines.join("\n")
 }
 
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -1416,6 +1478,27 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     });
     settings.on_open_source(move || {
         let _ = std::process::Command::new("xdg-open").arg("https://github.com/yrmuq/yoin").spawn();
+    });
+    let taps = Rc::new(Cell::new(0u8));
+    let tap_at = Rc::new(Cell::new(None::<Instant>));
+    let app_dev = ctx.app.clone();
+    let settings_dev = settings.as_weak();
+    settings.on_version_tapped(move || {
+        let mut count = taps.get();
+        let mut last = tap_at.get();
+        if !version_burst(&mut count, &mut last, Instant::now()) {
+            taps.set(count);
+            tap_at.set(last);
+            return;
+        }
+        taps.set(0);
+        tap_at.set(None);
+        let Some(settings) = settings_dev.upgrade() else { return };
+        let open = !settings.get_dev_open();
+        settings.set_dev_open(open);
+        if open {
+            settings.set_dev_report(dev_icon_report(&app_dev.borrow()).into());
+        }
     });
 }
 
