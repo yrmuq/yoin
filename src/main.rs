@@ -437,7 +437,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
         match event {
             winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 if let Some(popup) = weak.upgrade() {
-                    let _ = sharpen_popup(&popup);
+                    sharpen_popup(&popup);
                     refresh_popup_at(&focus.app, &focus.shell, *scale_factor as f32);
                 }
             }
@@ -491,35 +491,17 @@ fn ctx_from(ctx: &Ctx) -> Ctx {
     }
 }
 
-fn sharpen_popup(popup: &Popup) -> bool {
-    let width = popup.get_layout_width();
-    let height = popup.get_layout_height();
-    if width < 2.0 || height < 2.0 {
-        return false;
-    }
-    let pending = popup.window().with_winit_window(|window| {
+fn sharpen_popup(popup: &Popup) {
+    let _ = popup.window().with_winit_window(|window| {
         let scale = window.scale_factor();
         if !scale.is_finite() || scale <= 0.0 {
-            return true;
+            return;
         }
         let snapped = (theme::system_font().size_px * scale as f32).round().max(1.0) / scale as f32;
         if (popup.get_ui_font_size() - snapped).abs() > 0.05 {
             popup.set_ui_font_size(snapped);
         }
-        let physical = window.inner_size();
-        let want_w = (width as f64 * scale).round() as u32;
-        let want_h = (height as f64 * scale).round() as u32;
-        // The Wayland window is often created before the scale arrives, so the
-        // buffer stays at 1x and the compositor stretches it. Asking again in
-        // logical pixels reallocates the buffer at the real scale.
-        if physical.width.abs_diff(want_w) > 1 || physical.height.abs_diff(want_h) > 1 {
-            let _ = window.request_inner_size(winit::dpi::LogicalSize::new(width as f64, height as f64));
-            return true;
-        }
-        false
-    }).unwrap_or(true);
-    popup.window().request_redraw();
-    pending
+    });
 }
 
 fn hide_popup(ctx: &Ctx) {
@@ -761,7 +743,7 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         window.set_title("yoin-buttons");
         window.focus_window();
     });
-    let _ = sharpen_popup(&popup);
+    sharpen_popup(&popup);
     start_slide(ctx, &popup);
     if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
         ctx.app.borrow_mut().place_warned = true;
