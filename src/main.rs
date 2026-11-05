@@ -684,25 +684,24 @@ fn lock_settings(settings: &Settings) {
     });
 }
 
-fn apply_header_icons(popup: &Popup, scale: f32) {
-    let edge = icon_px(22.0, scale);
-    if let Some(icon) = icons::theme_icon("akonadi-phone-home", edge) {
+fn apply_header_icons(popup: &Popup) {
+    if let Some(icon) = icons::theme_icon("akonadi-phone-home") {
         popup.set_icon_open(icon.image);
         popup.set_tint_open(icon.tint);
     }
-    if let Some(icon) = icons::theme_icon("configure", edge) {
+    if let Some(icon) = icons::theme_icon("configure") {
         popup.set_icon_configure(icon.image);
         popup.set_tint_configure(icon.tint);
     }
-    if let Some(icon) = icons::theme_icon("window-pin", edge) {
+    if let Some(icon) = icons::theme_icon("window-pin") {
         popup.set_icon_pin(icon.image);
         popup.set_tint_pin(icon.tint);
     }
-    if let Some(icon) = icons::theme_icon("arrow-up", edge) {
+    if let Some(icon) = icons::theme_icon("arrow-up") {
         popup.set_icon_arrow_up(icon.image);
         popup.set_tint_arrow_up(icon.tint);
     }
-    if let Some(icon) = icons::theme_icon("arrow-down", edge) {
+    if let Some(icon) = icons::theme_icon("arrow-down") {
         popup.set_icon_arrow_down(icon.image);
         popup.set_tint_arrow_down(icon.tint);
     }
@@ -822,7 +821,7 @@ fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f
     popup.set_button_size(button_size);
     popup.set_pinned(pinned);
     popup.set_notices_hidden(notices_hidden);
-    apply_header_icons(&popup, scale);
+    apply_header_icons(&popup);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
     sync_notices(app, shell);
 }

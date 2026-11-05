@@ -69,10 +69,14 @@ pub struct ThemeIcon {
 
 pub fn button_icon(kind: &str, on: bool, edge: u32) -> Option<ThemeIcon> {
     for name in icon_candidates(kind, on) {
-        if let Some(mut icon) = theme_icon(name, edge) {
-            if *name == "reverse" {
+        if *name == "reverse" {
+            if let Some(mut icon) = raster_theme_icon(name, edge) {
                 icon.image = turn_on_side(icon.image);
+                return Some(icon);
             }
+            continue;
+        }
+        if let Some(icon) = theme_icon(name) {
             return Some(icon);
         }
     }
@@ -109,14 +113,30 @@ fn icon_candidates(kind: &str, on: bool) -> &'static [&'static str] {
     }
 }
 
-pub fn theme_icon(name: &str, edge: u32) -> Option<ThemeIcon> {
+pub fn theme_icon(name: &str) -> Option<ThemeIcon> {
     let mut seen = std::collections::HashSet::new();
     let theme = icon_theme_name();
     let path = find_icon(&theme, name, &mut seen)
         .or_else(|| find_icon("breeze", name, &mut seen))
         .or_else(|| find_icon("hicolor", name, &mut seen))?;
     let tint = should_tint(&path);
-    let image = load_slint_image(&path, edge)?;
+    let image = load_slint_image(&path)?;
+    Some(ThemeIcon { image, tint })
+}
+
+fn raster_theme_icon(name: &str, edge: u32) -> Option<ThemeIcon> {
+    let mut seen = std::collections::HashSet::new();
+    let theme = icon_theme_name();
+    let path = find_icon(&theme, name, &mut seen)
+        .or_else(|| find_icon("breeze", name, &mut seen))
+        .or_else(|| find_icon("hicolor", name, &mut seen))?;
+    let tint = should_tint(&path);
+    let bytes = std::fs::read(&path).ok()?;
+    let image = if bytes.windows(4).any(|mark| mark == *b"<svg") || bytes.starts_with(b"<?xml") {
+        svg_image(&bytes, edge)?
+    } else {
+        load_slint_image(&path)?
+    };
     Some(ThemeIcon { image, tint })
 }
 
@@ -299,13 +319,13 @@ fn turn_on_side(image: slint::Image) -> slint::Image {
     slint::Image::from_rgba8(turned)
 }
 
-fn load_slint_image(path: &Path, edge: u32) -> Option<slint::Image> {
+fn load_slint_image(path: &Path) -> Option<slint::Image> {
     let bytes = std::fs::read(path).ok()?;
     if bytes.starts_with(b"\x89PNG") {
         return png_image(&bytes);
     }
     if bytes.windows(4).any(|mark| mark == *b"<svg") || bytes.starts_with(b"<?xml") {
-        return svg_image(&bytes, edge);
+        return slint::Image::load_from_svg_data(&bytes).ok();
     }
     slint::Image::load_from_path(path).ok()
 }
@@ -353,7 +373,7 @@ mod tests {
     fn breeze_pin_is_one_color_and_rasterizes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("ui/icons/window-pin.svg");
         assert!(should_tint(&path));
-        assert!(svg_image(&std::fs::read(&path).unwrap(), 64).is_some());
+        assert!(slint::Image::load_from_svg_data(&std::fs::read(&path).unwrap()).is_ok());
         let file = std::env::temp_dir().join("yoin-colored.svg");
         std::fs::write(&file, "<svg><path fill=\"#ff0000\"/><path fill=\"#00ff00\"/></svg>").unwrap();
         assert!(!should_tint(&file));
