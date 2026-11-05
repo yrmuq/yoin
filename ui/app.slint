@@ -292,7 +292,6 @@ component TileButton inherits Rectangle {
     border-color: on || hovered ? Breeze.outline : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
     property <length> icon-side: Math.max(16px, root.side * 0.32);
-    clip: true;
     Rectangle {
         x: (parent.width - root.icon-side) / 2;
         y: (parent.height - root.icon-side) / 2;
@@ -390,7 +389,6 @@ export component Popup inherits Window {
         border-radius: Breeze.radius;
         border-width: 1px;
         border-color: Breeze.frame;
-        clip: true;
         VerticalLayout {
             padding: root.pad;
             spacing: 4px;
