@@ -68,13 +68,13 @@ class ReleaseNotes(unittest.TestCase):
             text,
             "\n".join(
                 [
-                    "### Added",
+                    "Added",
                     "- Add a language file.",
                     "",
-                    "### Changed",
+                    "Changed",
                     "- Move the pin.",
                     "",
-                    "### Fixed",
+                    "Fixed",
                     "- Fix the seek bar.",
                     "",
                 ]

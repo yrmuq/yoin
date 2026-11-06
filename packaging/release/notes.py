@@ -52,7 +52,7 @@ def commit_notes(subjects):
             continue
         if lines:
             lines.append("")
-        lines.append("### " + name)
+        lines.append(name)
         for text in buckets[name]:
             lines.append("- %s" % text)
     if not lines:
