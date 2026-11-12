@@ -29,6 +29,9 @@ impl ksni::Tray for YoinTray {
     fn title(&self) -> String {
         "yoin".into()
     }
+    fn category(&self) -> ksni::Category {
+        ksni::Category::Hardware
+    }
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
         self.view.lock().map(|view| view.icon.clone()).unwrap_or_default()
     }

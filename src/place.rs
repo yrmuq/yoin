@@ -57,9 +57,7 @@ skippager=true
 skippagerrule=2
 skipswitcher=true
 skipswitcherrule=2
-title=yoin-(buttons|notices)
-titlematch=3
-wmclass=yoin
+wmclass=yoin-popup
 wmclassmatch=1
 wmclasscomplete=false
 ";
@@ -107,7 +105,7 @@ fn rewrite_tray_rule(text: &str) -> String {
 }
 fn merge_kwin_rules(text: &str) -> Option<String> {
     if text.contains("[yoin-tray]") {
-        if text.contains("title=yoin-(buttons|notices)\n") && text.contains("titlematch=3\n") {
+        if tray_rule_current(text) {
             return None;
         }
         return Some(rewrite_tray_rule(text));
@@ -167,6 +165,19 @@ fn merge_kwin_rules(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// The title is applied after Wayland maps the window, so a title match lets
+/// the task manager draw an icon first. The popup class is set before that.
+fn tray_rule_current(text: &str) -> bool {
+    let Some(start) = text.find("[yoin-tray]") else { return false };
+    let after = &text[start + "[yoin-tray]".len()..];
+    let end = after.find("\n[").unwrap_or(after.len());
+    let section = &after[..end];
+    section.contains("wmclass=yoin-popup\n")
+        && section.contains("wmclassmatch=1\n")
+        && section.contains("skiptaskbarrule=2\n")
+        && !section.contains("title=")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,18 +188,20 @@ mod tests {
         assert!(first.contains("rules=1,yoin-tray\n"));
         assert!(first.contains("count=2\n"));
         assert!(first.contains("skiptaskbar=true\n"));
-        assert!(first.contains("title=yoin-(buttons|notices)\n"));
-        assert!(first.contains("titlematch=3\n"));
+        assert!(first.contains("wmclass=yoin-popup\n"));
+        assert!(first.contains("wmclassmatch=1\n"));
+        assert!(!first.contains("title="));
         assert!(merge_kwin_rules(&first).is_none());
         let stale = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin\nskiptaskbar=true\n";
         let updated = merge_kwin_rules(stale).unwrap();
-        assert!(updated.contains("title=yoin-(buttons|notices)\n"));
+        assert!(updated.contains("wmclass=yoin-popup\n"));
+        assert!(!updated.contains("title="));
         assert!(!updated.contains("Description=yoin tray windows\n"));
         assert!(merge_kwin_rules(&updated).is_none());
-        let old = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nDescription=yoin tray popup\ntitle=yoin-buttons\ntitlematch=1\nwmclass=yoin\n";
+        let old = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nDescription=yoin tray popup\ntitle=yoin-(buttons|notices)\ntitlematch=3\nwmclass=yoin\nwmclassmatch=1\n";
         let fixed = merge_kwin_rules(old).unwrap();
-        assert!(fixed.contains("title=yoin-(buttons|notices)\n"));
-        assert!(!fixed.contains("title=yoin-buttons\n"));
+        assert!(fixed.contains("wmclass=yoin-popup\n"));
+        assert!(!fixed.contains("title="));
         assert!(merge_kwin_rules(&fixed).is_none());
         let empty = merge_kwin_rules("").unwrap();
         assert!(empty.contains("[yoin-tray]\n"));

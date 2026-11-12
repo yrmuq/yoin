@@ -34,6 +34,36 @@ slint::include_modules!();
 
 type TrayHandle = Arc<ksni::Handle<YoinTray>>;
 
+const POPUP_CLASS: &str = "yoin-popup";
+
+thread_local! {
+    static POPUP_CLASS_HELD: Cell<bool> = const { Cell::new(false) };
+}
+
+fn hold_popup_class() {
+    if POPUP_CLASS_HELD.replace(true) {
+        return;
+    }
+    let _ = slint::set_xdg_app_id(POPUP_CLASS);
+}
+
+fn release_popup_class(shell: &RefCell<Shell>) {
+    if !POPUP_CLASS_HELD.get() {
+        return;
+    }
+    let pending = |window: &slint::Window| window.is_visible() && window.with_winit_window(|_| ()).is_none();
+    let waiting = {
+        let shell = shell.borrow();
+        shell.popup.as_ref().is_some_and(|popup| pending(popup.window()))
+            || shell.notices.as_ref().is_some_and(|notices| pending(notices.window()))
+    };
+    if waiting {
+        return;
+    }
+    POPUP_CLASS_HELD.set(false);
+    let _ = slint::set_xdg_app_id("yoin");
+}
+
 struct App {
     cfg: Config,
     catalog: Catalog,
@@ -88,8 +118,9 @@ fn main() {
         eprintln!("yoin: graphics: {err}");
         return;
     }
-    // Wayland reports this as the window class. The tray popup is kept off
-    // the taskbar. The settings window is not.
+    // Wayland reports this as the window class. Settings stay "yoin" so they
+    // remain on the taskbar. The tray windows use yoin-popup, set before the
+    // window is mapped, because the caption arrives one frame later.
     let _ = slint::set_xdg_app_id("yoin");
     let mut cfg = config::load_config(&config::config_path());
     let folder = i18n::language_dir();
@@ -176,6 +207,7 @@ fn main() {
     let mut age_tick = Instant::now();
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(80), move || {
+        release_popup_class(&ctx_timer.shell);
         let mut toggles = 0u32;
         while let Ok(cmd) = tray_rx.try_recv() {
             match cmd {
@@ -640,7 +672,16 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
 
 fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
+    // A popup may still be waiting for its window. Settings must not inherit
+    // that class, or the taskbar rule hides them.
+    let restore_popup_class = POPUP_CLASS_HELD.get();
+    if restore_popup_class {
+        let _ = slint::set_xdg_app_id("yoin");
+    }
     settings.show().ok();
+    if restore_popup_class {
+        let _ = slint::set_xdg_app_id(POPUP_CLASS);
+    }
     let _ = settings.window().with_winit_window(|window| {
         let scale = window.scale_factor() as f32;
         if scale.is_finite() && scale > 0.0 {
@@ -737,6 +778,7 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         app.close_popup = false;
         app.popup_at = Instant::now();
     }
+    hold_popup_class();
     refresh_popup(&ctx.app, &ctx.shell);
     popup.set_pinned(ctx.app.borrow().pinned);
     let height = popup.get_layout_height();
@@ -865,6 +907,7 @@ fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &P
         return false;
     }
     notices.set_slide(notice_h);
+    hold_popup_class();
     notices.show().ok();
     let _ = notices.window().with_winit_window(|window| {
         window.set_title("yoin-notices");
@@ -1166,6 +1209,10 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_rename(cat.tr(38).into());
     settings.set_t_about(cat.tr(51).into());
     settings.set_t_about_body(cat.tr(52).into());
+    settings.set_t_repository(cat.tr(53).into());
+    settings.set_t_version_label(cat.tr(54).into());
+    settings.set_t_thanks(cat.tr(55).into());
+    settings.set_t_and(cat.tr(56).into());
     settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
@@ -1478,6 +1525,13 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     });
     settings.on_open_source(move || {
         let _ = std::process::Command::new("xdg-open").arg("https://github.com/yrmuq/yoin").spawn();
+    });
+    settings.on_open_link(move |url| {
+        let url = url.to_string();
+        let allowed = url == "https://www.home-assistant.io" || url == "https://kde.org";
+        if allowed {
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        }
     });
     let taps = Rc::new(Cell::new(0u8));
     let tap_at = Rc::new(Cell::new(None::<Instant>));

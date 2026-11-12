@@ -6,6 +6,14 @@ function textOf(value) {
     return value == null ? "" : String(value);
 }
 
+function resourceText(window) {
+    return textOf(window.resourceClass) + " " + textOf(window.resourceName);
+}
+
+function isPopupClass(window) {
+    return resourceText(window).indexOf("yoin-popup") !== -1;
+}
+
 function isPopup(window) {
     return textOf(window.caption) === "yoin-buttons" && !window.dialog;
 }
@@ -202,6 +210,7 @@ function track(window) {
     const entry = { window: window, anchor: null, moving: false };
     windows.set(window, entry);
     const onShow = () => {
+        hideFromTaskbar(window);
         entry.anchor = selectAnchor(window);
         place(entry);
     };
@@ -253,10 +262,6 @@ function consider(window) {
     if (isNotice(window)) {
         hideFromTaskbar(window);
         trackNotice(window);
-        return;
-    }
-    if (isSettings(window)) {
-        showOnTaskbar(window);
     }
 }
 
@@ -267,7 +272,7 @@ function showOnTaskbar(window) {
 }
 
 function isSettings(window) {
-    return textOf(window.caption) === "yoin";
+    return textOf(window.caption) === "yoin" && !isPopupClass(window);
 }
 
 function raiseSettings() {
@@ -299,6 +304,7 @@ function trackNotice(window) {
     if (visibilityChanged) {
         visibilityChanged.connect(() => {
             if (!window.hidden) {
+                hideFromTaskbar(window);
                 repositionNotices();
             }
         });
@@ -320,6 +326,9 @@ function trackNotice(window) {
 }
 
 function arm(window) {
+    if (isPopupClass(window)) {
+        hideFromTaskbar(window);
+    }
     consider(window);
     if (window.captionChanged) {
         window.captionChanged.connect(() => consider(window));
