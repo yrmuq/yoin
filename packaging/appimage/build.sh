@@ -94,7 +94,10 @@ rm -f "$OUT" "$OUT.zsync" "$DIST/yoin-x86_64.AppImage.sha256"
 UPDATE="gh-releases-zsync|yrmuq|yoin|latest|yoin-x86_64.AppImage.zsync"
 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" -u "$UPDATE" "$APPDIR" "$OUT"
 chmod +x "$OUT"
-grep -a -F "$UPDATE" "$OUT" >/dev/null
+if ! strings "$OUT" | grep -F -q "$UPDATE"; then
+    echo "update information was not embedded in $OUT" >&2
+    exit 1
+fi
 test -s "$OUT.zsync"
 (
     cd "$DIST"
