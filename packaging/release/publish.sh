@@ -43,8 +43,15 @@ case "$VER" in
         ;;
 esac
 
+IMAGE="dist/yoin-x86_64.AppImage"
+ZSYNC="${IMAGE}.zsync"
+SUM="${IMAGE}.sha256"
+test -s "$IMAGE"
+test -s "$ZSYNC"
+test -s "$SUM"
+
 if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-    gh release upload "$TAG" dist/yoin-x86_64.AppImage \
+    gh release upload "$TAG" "$IMAGE" "$ZSYNC" "$SUM" \
         --repo "$GITHUB_REPOSITORY" \
         --clobber
     # shellcheck disable=SC2086
@@ -55,7 +62,7 @@ if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
         --notes-file notes.md
 else
     # shellcheck disable=SC2086
-    gh release create "$TAG" dist/yoin-x86_64.AppImage \
+    gh release create "$TAG" "$IMAGE" "$ZSYNC" "$SUM" \
         --repo "$GITHUB_REPOSITORY" \
         $extra \
         --title "$title" \

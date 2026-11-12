@@ -36,7 +36,7 @@ export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-github-actions[bot]}"
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
 export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
-git add Cargo.toml Cargo.lock chit/lore.md
+git add Cargo.toml Cargo.lock
 git commit -m "Version ${new}."
 git -c core.commentChar=% tag -a "v${new}" -F notes.md
 printf '%s\n' "$new"

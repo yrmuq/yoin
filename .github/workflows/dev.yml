@@ -1,20 +1,25 @@
 # Copyright (C) 2026 yrmuq
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Manual AppImage from the dev branch.
-# It updates the draft release "yoin dev" and does not replace an X.Y.0 release.
+# Every push to dev updates the existing draft release.
+# It does not change the version and it does not create a tag.
 
 name: Development build
 
 on:
+  push:
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  appimage:
+  build:
     if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-24.04
+    concurrency:
+      group: yoin-dev-build
+      cancel-in-progress: true
     steps:
       - uses: actions/checkout@v7
 
@@ -31,23 +36,62 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: yoin-rust-${{ hashFiles('Cargo.lock') }}
+          key: yoin-ubuntu-x64-stable-${{ hashFiles('Cargo.lock') }}
 
       - name: Build
         run: bash packaging/appimage/build.sh
 
-      - name: Publish draft
+      - uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: |
+            dist/yoin-x86_64.AppImage
+            dist/yoin-x86_64.AppImage.zsync
+            dist/yoin-x86_64.AppImage.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: yoin-dev-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+          path: dist
+
+      - name: Update the draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
+          test -s dist/yoin-x86_64.AppImage
+          test -s dist/yoin-x86_64.AppImage.zsync
+          test -s dist/yoin-x86_64.AppImage.sha256
+          chmod +x dist/yoin-x86_64.AppImage
           printf '%s\n' 'Development build from dev. Not a release.' > notes.md
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          gh release delete dev --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag || true
-          git tag -a dev -m "$(cat notes.md)"
-          git push origin refs/tags/dev
-          gh release create dev dist/yoin-x86_64.AppImage \
+          if ! gh release view dev --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "the dev draft is missing, and this job does not create a tag" >&2
+            exit 1
+          fi
+          gh release view dev --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r name; do
+            case "$name" in
+              yoin-x86_64.AppImage|yoin-x86_64.AppImage.zsync|yoin-x86_64.AppImage.sha256) ;;
+              *) gh release delete-asset dev "$name" --repo "$GITHUB_REPOSITORY" --yes ;;
+            esac
+          done
+          gh release upload dev \
+            dist/yoin-x86_64.AppImage \
+            dist/yoin-x86_64.AppImage.zsync \
+            dist/yoin-x86_64.AppImage.sha256 \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          gh release edit dev \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
             --title "yoin dev" \

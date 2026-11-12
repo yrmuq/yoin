@@ -1,6 +1,11 @@
 # lore
 
-Reply in Russian, short and plain.
-Repository: `https://github.com/yrmuq/yoin`. Commit as `yrmuq <76932153+yrmuq@users.noreply.github.com>`.
-Own code is `src/` and `ui/`. The windows are `slint`. The tray is `ksni`. No Qt.
-Version: X.Y.Z. Work goes on `dev`, not on `main`. Merging `dev` into `main` with a merge commit raises Y and sets Z to 0. That is a normal release, not a prerelease. A squash does not release. Dependabot publishes `X.Y.1`, `X.Y.2` from `main` plus dependency updates, and deletes the previous prerelease of that kind. Merge `deps` into `dev` by hand. Do not bump the number on a `dev` commit. Current: `0.13.0`.
+## Protected Areas
+- Do not add Qt or a browser engine. Windows stay in `ui/` through `slint`, and the tray stays `ksni`, because yoin is a native Plasma tray program.
+
+## Required Behavior
+- A Home Assistant notification is missed when yoin is not running. That is the local push channel, not a delivery bug.
+- The developer panel stays hidden until the version line in About is clicked five times within two seconds.
+
+## Compatibility Workarounds
+- The sideways switch icon is drawn to a bitmap before it is rotated, because the UI toolkit rotates bitmaps only. Remove this when an SVG can be rotated in place.

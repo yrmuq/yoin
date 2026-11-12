@@ -63,9 +63,17 @@ jobs:
         if: steps.tag.outputs.version != ''
         env:
           GH_TOKEN: ${{ github.token }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
         run: |
           set -eu
           ver="${{ steps.tag.outputs.version }}"
           git push origin HEAD
           git push origin "refs/tags/v${ver}"
           bash packaging/release/publish.sh "v${ver}"
+          git fetch origin main dev
+          git checkout -B dev origin/dev
+          bash packaging/release/merge-ref.sh origin/main
+          git push origin HEAD:refs/heads/dev

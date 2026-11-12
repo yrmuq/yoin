@@ -18,12 +18,13 @@ Read only the row the task needs.
 - `languages/` — `English.ini` and `Russian.ini`.
 
 ## Packaging
-- `packaging/appimage/build.sh` — builds the Rust image and pins `appimagetool`.
-- `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
-- `.github/workflows/release.yml` — a merge commit from `dev` into `main` raises Y and publishes.
-- `.github/workflows/dev.yml` — manual draft from `dev`. It does not take a version number.
+- `packaging/appimage/build.sh` — builds the x86_64 AppImage, its `.zsync`, and the checksum, and pins `appimagetool`.
+- `.github/workflows/appimage.yml` — manual image build. It does not publish a release.
+- `.github/workflows/release.yml` — a merge commit from `dev` into `main` raises Y, publishes `X.Y.0`, and merges that version back into `dev`.
+- `.github/workflows/dev.yml` — every push to `dev` updates the draft. It does not take a version number or create a tag.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
-- `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
+- `.github/workflows/pins.yml` — `appimagetool` pin, Friday 09:00 UTC. Same prerelease path, not `main`.
+- `.github/workflows/sync-deps.yml` — on a push to `main`, updates `deps` from `main` and keeps commits that exist only on `deps`.
 - `packaging/release/` — version bump and notes. Not the program.
 
 ## Libraries

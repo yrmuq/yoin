@@ -90,8 +90,15 @@ cp "$ROOT/assets/icon.png" "$APPDIR/.DirIcon"
 cp "$ROOT/assets/icon.png" "$APPDIR/usr/share/icons/hicolor/256x256/apps/yoin.png"
 
 OUT="$DIST/yoin-x86_64.AppImage"
-rm -f "$OUT"
-ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" "$APPDIR" "$OUT"
+rm -f "$OUT" "$OUT.zsync" "$DIST/yoin-x86_64.AppImage.sha256"
+UPDATE="gh-releases-zsync|yrmuq|yoin|latest|yoin-x86_64.AppImage.zsync"
+ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" -u "$UPDATE" "$APPDIR" "$OUT"
 chmod +x "$OUT"
+grep -a -F "$UPDATE" "$OUT" >/dev/null
+test -s "$OUT.zsync"
+(
+    cd "$DIST"
+    sha256sum yoin-x86_64.AppImage yoin-x86_64.AppImage.zsync > yoin-x86_64.AppImage.sha256
+)
 echo "wrote $OUT"
-ls -lh "$OUT" "$BIN"
+ls -lh "$OUT" "$OUT.zsync" "$BIN"
