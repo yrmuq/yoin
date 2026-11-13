@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_BUTTONS: usize = 10;
+pub const DEFAULT_SETTINGS_WIDTH: u32 = 560;
+pub const DEFAULT_SETTINGS_HEIGHT: u32 = 640;
+pub const DEFAULT_LOGO_SIZE: u32 = 96;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +31,14 @@ pub struct Config {
     pub button_size: u32,
     pub notices_hidden: bool,
     pub notice_limit: u32,
+    #[serde(default, skip_serializing_if = "is_default_settings_width")]
+    pub settings_width: u32,
+    #[serde(default, skip_serializing_if = "is_default_settings_height")]
+    pub settings_height: u32,
+    #[serde(default, skip_serializing_if = "is_default_logo_size")]
+    pub logo_size: u32,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub dev_tab: bool,
 }
 
 impl Default for Config {
@@ -47,6 +58,10 @@ impl Default for Config {
             button_size: 40,
             notices_hidden: false,
             notice_limit: 3,
+            settings_width: DEFAULT_SETTINGS_WIDTH,
+            settings_height: DEFAULT_SETTINGS_HEIGHT,
+            logo_size: DEFAULT_LOGO_SIZE,
+            dev_tab: false,
         }
     }
 }
@@ -99,6 +114,9 @@ pub fn normalize(mut cfg: Config) -> Config {
     }
     cfg.button_size = cfg.button_size.clamp(32, 80);
     cfg.notice_limit = cfg.notice_limit.min(11);
+    cfg.settings_width = cfg.settings_width.clamp(360, 1100);
+    cfg.settings_height = cfg.settings_height.clamp(240, 900);
+    cfg.logo_size = cfg.logo_size.clamp(32, 256);
     cfg.labels.truncate(MAX_BUTTONS);
     cfg.labels.resize(cfg.buttons.len(), String::new());
     for label in &mut cfg.labels {
@@ -107,6 +125,22 @@ pub fn normalize(mut cfg: Config) -> Config {
     }
     cfg.language = cfg.language.trim().to_string();
     cfg
+}
+
+fn is_default_settings_width(value: &u32) -> bool {
+    *value == DEFAULT_SETTINGS_WIDTH
+}
+
+fn is_default_settings_height(value: &u32) -> bool {
+    *value == DEFAULT_SETTINGS_HEIGHT
+}
+
+fn is_default_logo_size(value: &u32) -> bool {
+    *value == DEFAULT_LOGO_SIZE
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 pub fn align_labels(cfg: &mut Config) {
@@ -230,5 +264,28 @@ mod tests {
         assert_eq!(cfg.notice_limit, 11);
         let cfg: Config = serde_json::from_str(r#"{"notice_limit":0}"#).unwrap();
         assert_eq!(normalize(cfg).notice_limit, 0);
+    }
+
+    #[test]
+    fn dev_fields_stay_out_of_the_file_until_they_change() {
+        let json = serde_json::to_string(&normalize(Config::default())).unwrap();
+        assert!(!json.contains("settings_width"));
+        assert!(!json.contains("settings_height"));
+        assert!(!json.contains("logo_size"));
+        assert!(!json.contains("dev_tab"));
+        let mut cfg = Config::default();
+        cfg.settings_width = 700;
+        cfg.dev_tab = true;
+        let json = serde_json::to_string(&normalize(cfg)).unwrap();
+        assert!(json.contains("\"settings_width\":700"));
+        assert!(json.contains("\"dev_tab\":true"));
+        let cfg: Config = serde_json::from_str(
+            r#"{"settings_width":10,"settings_height":5000,"logo_size":1}"#,
+        )
+        .unwrap();
+        let cfg = normalize(cfg);
+        assert_eq!(cfg.settings_width, 360);
+        assert_eq!(cfg.settings_height, 900);
+        assert_eq!(cfg.logo_size, 32);
     }
 }

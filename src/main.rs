@@ -19,6 +19,7 @@ use std::os::fd::AsRawFd;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
@@ -91,6 +92,7 @@ struct Shell {
     slide_timer: Option<Rc<slint::Timer>>,
     notice_slide: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
+    lock_timer: Option<slint::Timer>,
     notice_timer: Option<Rc<slint::Timer>>,
     notices: Option<Notices>,
 }
@@ -184,6 +186,7 @@ fn main() {
             slide_timer: None,
             notice_slide: None,
             raise_timer: None,
+            lock_timer: None,
             notice_timer: None,
             notices: None,
         })),
@@ -459,7 +462,7 @@ fn ensure_settings(ctx: &Ctx) -> Settings {
         settings.set_status(ctx.app.borrow().status.clone().into());
     }
     wire_settings(ctx, &settings);
-    lock_settings(&settings);
+    apply_metrics(&settings, &ctx.app.borrow().cfg);
     settings
 }
 
@@ -699,12 +702,14 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
         settings.set_dev_report(dev_icon_report(&ctx.app.borrow()).into());
     }
     raise_settings(ctx, settings);
+    lock_settings(settings);
     let weak = settings.as_weak();
     let ctx_kick = ctx_from(ctx);
     let kick = slint::Timer::default();
     kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
             raise_settings(&ctx_kick, &settings);
+            lock_settings(&settings);
         }
     });
     ctx.shell.borrow_mut().raise_timer = Some(kick);
@@ -713,7 +718,38 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
 fn lock_settings(settings: &Settings) {
     let _ = settings.window().with_winit_window(|window| {
         window.set_resizable(false);
+        let size = window.inner_size();
+        if size.width > 0 && size.height > 0 {
+            window.set_min_inner_size(Some(size));
+            window.set_max_inner_size(Some(size));
+        }
     });
+}
+
+fn unlock_settings(settings: &Settings) {
+    let _ = settings.window().with_winit_window(|window| {
+        window.set_resizable(true);
+        window.set_min_inner_size(None::<winit::dpi::PhysicalSize<u32>>);
+        window.set_max_inner_size(None::<winit::dpi::PhysicalSize<u32>>);
+    });
+}
+
+fn pin_settings_later(ctx: &Ctx, settings: &Settings) {
+    let weak = settings.as_weak();
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
+        if let Some(settings) = weak.upgrade() {
+            lock_settings(&settings);
+        }
+    });
+    ctx.shell.borrow_mut().lock_timer = Some(timer);
+}
+
+fn apply_metrics(settings: &Settings, cfg: &Config) {
+    settings.set_settings_width(cfg.settings_width as i32);
+    settings.set_settings_height(cfg.settings_height as i32);
+    settings.set_logo_size(cfg.logo_size as i32);
+    settings.set_dev_open(cfg.dev_tab);
 }
 
 fn apply_header_icons(popup: &Popup) {
@@ -1127,6 +1163,105 @@ fn step_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> bool {
     app.borrow().notes.iter().any(|note| note.closing || note.fade < 1.0)
 }
 
+#[derive(serde::Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+#[derive(Debug)]
+enum ReleaseLook {
+    Latest,
+    Newer(String),
+    Failed,
+}
+
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let text = text.strip_prefix('v').unwrap_or(text);
+    let mut parts = text.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn release_status(current: &str, body: &str) -> Result<ReleaseLook, ()> {
+    let releases: Vec<GhRelease> = serde_json::from_str(body).map_err(|_| ())?;
+    let current = parse_version(current).ok_or(())?;
+    let mut best: Option<(u64, u64, u64)> = None;
+    for release in releases {
+        if release.draft || release.prerelease {
+            continue;
+        }
+        let Some(version) = parse_version(&release.tag_name) else { continue };
+        if best.is_none_or(|have| version > have) {
+            best = Some(version);
+        }
+    }
+    let Some(best) = best else { return Ok(ReleaseLook::Latest) };
+    if best > current {
+        Ok(ReleaseLook::Newer(format!("{}.{}.{}", best.0, best.1, best.2)))
+    } else {
+        Ok(ReleaseLook::Latest)
+    }
+}
+
+fn release_page(version: &str) -> Option<String> {
+    let (major, minor, patch) = parse_version(version)?;
+    if format!("{major}.{minor}.{patch}") != version {
+        return None;
+    }
+    Some(format!("https://github.com/yrmuq/yoin/releases/tag/v{version}"))
+}
+
+async fn fetch_latest() -> ReleaseLook {
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(8)).use_rustls_tls().build() {
+        Ok(client) => client,
+        Err(_) => return ReleaseLook::Failed,
+    };
+    let text = match client
+        .get("https://api.github.com/repos/yrmuq/yoin/releases?per_page=100")
+        .header("User-Agent", "yoin")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(response) => match response.error_for_status() {
+            Ok(response) => response.text().await.unwrap_or_default(),
+            Err(_) => return ReleaseLook::Failed,
+        },
+        Err(_) => return ReleaseLook::Failed,
+    };
+    release_status(env!("CARGO_PKG_VERSION"), &text).unwrap_or(ReleaseLook::Failed)
+}
+
+fn show_release(settings: &Settings, catalog: &Catalog, look: ReleaseLook) {
+    match look {
+        ReleaseLook::Failed => {
+            settings.set_update_ok(false);
+            settings.set_update_has_download(false);
+            settings.set_update_note(catalog.tr(61).into());
+        }
+        ReleaseLook::Latest => {
+            settings.set_update_ok(true);
+            settings.set_update_has_download(false);
+            settings.set_update_note(format!("✓ {}", catalog.tr(59)).into());
+        }
+        ReleaseLook::Newer(version) => {
+            settings.set_update_ok(false);
+            settings.set_update_has_download(true);
+            settings.set_update_version(version.as_str().into());
+            settings.set_update_note(catalog.trf(60, &[&version]).into());
+        }
+    }
+}
+
 fn version_burst(count: &mut u8, last: &mut Option<Instant>, now: Instant) -> bool {
     if last.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_millis(2000)) {
         *count = 0;
@@ -1167,6 +1302,25 @@ mod version_burst_tests {
         assert!(!version_burst(&mut count, &mut last, start));
         assert!(!version_burst(&mut count, &mut last, start + Duration::from_millis(2500)));
         assert_eq!(count, 1);
+    }
+}
+
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+
+    #[test]
+    fn a_newer_stable_release_is_the_one_offered() {
+        let body = r#"[{"tag_name":"v0.2.0","draft":true,"prerelease":false},{"tag_name":"v0.9.0","draft":false,"prerelease":true},{"tag_name":"v0.1.5","draft":false,"prerelease":false},{"tag_name":"v0.1.4","draft":false,"prerelease":false}]"#;
+        match release_status("0.1.0", body) {
+            Ok(ReleaseLook::Newer(version)) => assert_eq!(version, "0.1.5"),
+            other => panic!("expected 0.1.5, got {other:?}"),
+        }
+        assert!(matches!(release_status("0.1.5", body), Ok(ReleaseLook::Latest)));
+        assert!(matches!(release_status("0.2.0", body), Ok(ReleaseLook::Latest)));
+        assert!(release_page("0.1.5").as_deref() == Some("https://github.com/yrmuq/yoin/releases/tag/v0.1.5"));
+        assert!(release_page("v0.1.5").is_none());
+        assert!(release_status("0.1.0", "not json").is_err());
     }
 }
 
@@ -1230,6 +1384,11 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_about_body(cat.tr(52).into());
     settings.set_t_repository(cat.tr(53).into());
     settings.set_t_version_label(cat.tr(54).into());
+    settings.set_t_download(cat.tr(62).into());
+    settings.set_t_reset(cat.tr(63).into());
+    settings.set_t_window_width(cat.tr(64).into());
+    settings.set_t_window_height(cat.tr(65).into());
+    settings.set_t_logo_size(cat.tr(66).into());
     settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
@@ -1587,7 +1746,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     let tap_at = Rc::new(Cell::new(None::<Instant>));
     let app_dev = ctx.app.clone();
     let settings_dev = settings.as_weak();
-    settings.on_version_tapped(move || {
+    let ctx_logo = ctx_from(ctx);
+    settings.on_logo_tapped(move || {
         let mut count = taps.get();
         let mut last = tap_at.get();
         if !version_burst(&mut count, &mut last, Instant::now()) {
@@ -1600,9 +1760,122 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         let Some(settings) = settings_dev.upgrade() else { return };
         let open = !settings.get_dev_open();
         settings.set_dev_open(open);
+        if !open && settings.get_page() == 4 {
+            settings.set_page(3);
+        }
+        ctx_logo.app.borrow_mut().cfg.dev_tab = open;
+        let _ = config::save_config(&ctx_logo.app.borrow().cfg, &config::config_path());
         if open {
             settings.set_dev_report(dev_icon_report(&app_dev.borrow()).into());
         }
+    });
+    let ctx_metrics = ctx_from(ctx);
+    let settings_metrics = settings.as_weak();
+    settings.on_metrics_changed(move || {
+        let Some(settings) = settings_metrics.upgrade() else { return };
+        let width = settings.get_settings_width().clamp(360, 1100) as u32;
+        let height = settings.get_settings_height().clamp(240, 900) as u32;
+        let logo = settings.get_logo_size().clamp(32, 256) as u32;
+        let changed = {
+            let cfg = &ctx_metrics.app.borrow().cfg;
+            cfg.settings_width != width || cfg.settings_height != height || cfg.logo_size != logo
+        };
+        if !changed {
+            return;
+        }
+        {
+            let mut app = ctx_metrics.app.borrow_mut();
+            app.cfg.settings_width = width;
+            app.cfg.settings_height = height;
+            app.cfg.logo_size = logo;
+            let _ = config::save_config(&app.cfg, &config::config_path());
+        }
+        unlock_settings(&settings);
+        pin_settings_later(&ctx_metrics, &settings);
+    });
+    let ctx_reset = ctx_from(ctx);
+    let settings_reset = settings.as_weak();
+    settings.on_reset_appearance(move || {
+        let Some(settings) = settings_reset.upgrade() else { return };
+        let language = i18n::match_language(&i18n::language_dir(), &i18n::system_languages());
+        let dropped = {
+            let mut app = ctx_reset.app.borrow_mut();
+            app.cfg.language = language;
+            app.cfg.theme = "system".into();
+            app.cfg.layout = "list".into();
+            app.cfg.button_size = 40;
+            app.cfg.notice_limit = 3;
+            app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
+            app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
+            app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            app.cfg.dev_tab = false;
+            let dropped = notices::trim(&mut app.notes, 3);
+            let _ = config::save_config(&app.cfg, &config::config_path());
+            notices::save(&app.notes);
+            dropped
+        };
+        notices::forget(&dropped);
+        let name = ctx_reset.app.borrow().cfg.language.clone();
+        ctx_reset.app.borrow_mut().catalog = Catalog::load(&i18n::language_dir(), &name);
+        if let Ok(mut view) = ctx_reset.view.lock() {
+            view.settings = ctx_reset.app.borrow().catalog.tr(1);
+            view.quit = ctx_reset.app.borrow().catalog.tr(2);
+        }
+        ctx_reset.rt.block_on(ctx_reset.tray.update(|_| ()));
+        apply_metrics(&settings, &ctx_reset.app.borrow().cfg);
+        fill_text(&ctx_reset.app, &settings);
+        fill_rows(&ctx_reset.app, &settings);
+        paint_theme(&ctx_reset);
+        unlock_settings(&settings);
+        pin_settings_later(&ctx_reset, &settings);
+        if let Some(_popup) = popup_of(&ctx_reset.shell) {
+            refresh_popup(&ctx_reset.app, &ctx_reset.shell);
+        }
+    });
+    let ctx_dev = ctx_from(ctx);
+    let settings_dev_reset = settings.as_weak();
+    settings.on_reset_dev(move || {
+        let Some(settings) = settings_dev_reset.upgrade() else { return };
+        {
+            let mut app = ctx_dev.app.borrow_mut();
+            app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
+            app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
+            app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            let _ = config::save_config(&app.cfg, &config::config_path());
+        }
+        apply_metrics(&settings, &ctx_dev.app.borrow().cfg);
+        unlock_settings(&settings);
+        pin_settings_later(&ctx_dev, &settings);
+    });
+    let ctx_about = ctx_from(ctx);
+    let settings_about = settings.as_weak();
+    let checking = Arc::new(AtomicBool::new(false));
+    settings.on_about_opened(move || {
+        if checking.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if let Some(settings) = settings_about.upgrade() {
+            settings.set_update_note("".into());
+            settings.set_update_ok(false);
+            settings.set_update_has_download(false);
+        }
+        let checking = checking.clone();
+        let settings_about = settings_about.clone();
+        let catalog = ctx_about.app.borrow().catalog.clone();
+        ctx_about.rt.spawn(async move {
+            let found = fetch_latest().await;
+            let _ = slint::invoke_from_event_loop(move || {
+                checking.store(false, Ordering::SeqCst);
+                let Some(settings) = settings_about.upgrade() else { return };
+                show_release(&settings, &catalog, found);
+            });
+        });
+    });
+    let settings_download = settings.as_weak();
+    settings.on_open_download(move || {
+        let Some(settings) = settings_download.upgrade() else { return };
+        let Some(url) = release_page(&settings.get_update_version()) else { return };
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     });
 }
 
