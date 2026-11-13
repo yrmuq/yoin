@@ -706,10 +706,9 @@ export component Settings inherits Window {
     in-out property <string> version;
     in-out property <bool> dev-open: false;
     in-out property <string> dev-report;
-    in-out property <int> settings-width: 1120;
-    in-out property <int> settings-height: 1280;
+    in-out property <int> settings-width: 560;
+    in-out property <int> settings-height: 640;
     in-out property <int> logo-size: 96;
-    in-out property <bool> resize-window: true;
     in-out property <int> page: 0;
     changed page => {
         if (root.page == 3) {
@@ -758,7 +757,6 @@ export component Settings inherits Window {
     in-out property <string> t-window-width;
     in-out property <string> t-window-height;
     in-out property <string> t-logo-size;
-    in-out property <string> t-resize;
     in-out property <string> t-source;
     callback connect();
     callback save();
@@ -782,7 +780,6 @@ export component Settings inherits Window {
     callback metrics-changed();
     callback reset-appearance();
     callback reset-dev();
-    callback resize-toggled(bool);
     preferred-width: root.settings-width * 1px;
     preferred-height: root.settings-height * 1px;
     background: Breeze.window;
@@ -824,8 +821,6 @@ export component Settings inherits Window {
                 height: 1px;
                 background: Breeze.frame;
             }
-            ScrollView {
-                vertical-stretch: 1;
             if root.page == 0: VerticalBox {
                     alignment: start;
                     padding: 8px;
@@ -853,7 +848,8 @@ export component Settings inherits Window {
                     }
                     Hint { text: root.status; }
                 }
-            if root.page == 1: VerticalBox {
+            if root.page == 1: ScrollView {
+                    VerticalBox {
                         alignment: start;
                         padding: 8px;
                         spacing: 6px;
@@ -935,6 +931,7 @@ export component Settings inherits Window {
                             clicked => { root.add(); }
                         }
                     }
+                }
             if root.page == 2: VerticalBox {
                     alignment: start;
                     padding: 8px;
@@ -1126,22 +1123,17 @@ export component Settings inherits Window {
                     alignment: start;
                     padding: 8px;
                     spacing: 6px;
-                    resize-box := CheckBox {
-                        text: root.t-resize;
-                        checked <=> root.resize-window;
-                        toggled => { root.resize-toggled(resize-box.checked); }
-                    }
                     Label { text: root.t-window-width; }
                     SpinBox {
                         minimum: 360;
-                        maximum: 2200;
+                        maximum: 1100;
                         value <=> root.settings-width;
                         edited => { root.metrics-changed(); }
                     }
                     Label { text: root.t-window-height; }
                     SpinBox {
                         minimum: 240;
-                        maximum: 1800;
+                        maximum: 900;
                         value <=> root.settings-height;
                         edited => { root.metrics-changed(); }
                     }
@@ -1152,18 +1144,24 @@ export component Settings inherits Window {
                         value <=> root.logo-size;
                         edited => { root.metrics-changed(); }
                     }
-                    Text {
-                        text: root.dev-report;
-                        wrap: word-wrap;
-                        width: 100%;
-                        color: Breeze.fg;
+                    Flickable {
+                        vertical-stretch: 1;
+                        min-height: 80px;
+                        content-height: report.preferred-height;
+                        report := Text {
+                            x: 0px;
+                            y: 0px;
+                            text: root.dev-report;
+                            wrap: no-wrap;
+                            width: parent.width;
+                            color: Breeze.fg;
+                        }
                     }
                     Button {
                         text: root.t-reset;
                         clicked => { root.reset-dev(); }
                     }
                 }
-            }
         }
     }
 }

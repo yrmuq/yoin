@@ -92,7 +92,6 @@ struct Shell {
     slide_timer: Option<Rc<slint::Timer>>,
     notice_slide: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
-    lock_timer: Option<slint::Timer>,
     notice_timer: Option<Rc<slint::Timer>>,
     notices: Option<Notices>,
 }
@@ -186,7 +185,6 @@ fn main() {
             slide_timer: None,
             notice_slide: None,
             raise_timer: None,
-            lock_timer: None,
             notice_timer: None,
             notices: None,
         })),
@@ -702,60 +700,15 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
         settings.set_dev_report(dev_icon_report(&ctx.app.borrow()).into());
     }
     raise_settings(ctx, settings);
-    apply_resize(settings);
     let weak = settings.as_weak();
     let ctx_kick = ctx_from(ctx);
     let kick = slint::Timer::default();
     kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
             raise_settings(&ctx_kick, &settings);
-            apply_resize(&settings);
         }
     });
     ctx.shell.borrow_mut().raise_timer = Some(kick);
-}
-
-fn lock_settings(settings: &Settings) {
-    let width = settings.get_settings_width().max(1) as f64;
-    let height = settings.get_settings_height().max(1) as f64;
-    let _ = settings.window().with_winit_window(|window| {
-        let scale = window.scale_factor();
-        let size = winit::dpi::PhysicalSize::new(
-            (width * scale).round().max(1.0) as u32,
-            (height * scale).round().max(1.0) as u32,
-        );
-        let _ = window.request_inner_size(size);
-        window.set_resizable(false);
-        window.set_min_inner_size(Some(size));
-        window.set_max_inner_size(Some(size));
-    });
-}
-
-fn unlock_settings(settings: &Settings) {
-    let _ = settings.window().with_winit_window(|window| {
-        window.set_resizable(true);
-        window.set_min_inner_size(None::<winit::dpi::PhysicalSize<u32>>);
-        window.set_max_inner_size(None::<winit::dpi::PhysicalSize<u32>>);
-    });
-}
-
-fn apply_resize(settings: &Settings) {
-    if settings.get_resize_window() {
-        unlock_settings(settings);
-    } else {
-        lock_settings(settings);
-    }
-}
-
-fn pin_settings_later(ctx: &Ctx, settings: &Settings) {
-    let weak = settings.as_weak();
-    let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
-        if let Some(settings) = weak.upgrade() {
-            apply_resize(&settings);
-        }
-    });
-    ctx.shell.borrow_mut().lock_timer = Some(timer);
 }
 
 fn apply_metrics(settings: &Settings, cfg: &Config) {
@@ -763,7 +716,6 @@ fn apply_metrics(settings: &Settings, cfg: &Config) {
     settings.set_settings_height(cfg.settings_height as i32);
     settings.set_logo_size(cfg.logo_size as i32);
     settings.set_dev_open(cfg.dev_tab);
-    settings.set_resize_window(cfg.resize_window);
 }
 
 fn apply_header_icons(popup: &Popup) {
@@ -1403,7 +1355,6 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_window_width(cat.tr(64).into());
     settings.set_t_window_height(cat.tr(65).into());
     settings.set_t_logo_size(cat.tr(66).into());
-    settings.set_t_resize(cat.tr(67).into());
     settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
@@ -1788,8 +1739,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     let settings_metrics = settings.as_weak();
     settings.on_metrics_changed(move || {
         let Some(settings) = settings_metrics.upgrade() else { return };
-        let width = settings.get_settings_width().clamp(360, 2200) as u32;
-        let height = settings.get_settings_height().clamp(240, 1800) as u32;
+        let width = settings.get_settings_width().clamp(360, 1100) as u32;
+        let height = settings.get_settings_height().clamp(240, 900) as u32;
         let logo = settings.get_logo_size().clamp(32, 256) as u32;
         let changed = {
             let cfg = &ctx_metrics.app.borrow().cfg;
@@ -1805,8 +1756,6 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.logo_size = logo;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
-        unlock_settings(&settings);
-        pin_settings_later(&ctx_metrics, &settings);
     });
     let ctx_reset = ctx_from(ctx);
     let settings_reset = settings.as_weak();
@@ -1824,7 +1773,6 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
             app.cfg.dev_tab = false;
-            app.cfg.resize_window = true;
             let dropped = notices::trim(&mut app.notes, 3);
             let _ = config::save_config(&app.cfg, &config::config_path());
             notices::save(&app.notes);
@@ -1842,8 +1790,6 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         fill_text(&ctx_reset.app, &settings);
         fill_rows(&ctx_reset.app, &settings);
         paint_theme(&ctx_reset);
-        unlock_settings(&settings);
-        pin_settings_later(&ctx_reset, &settings);
         if let Some(_popup) = popup_of(&ctx_reset.shell) {
             refresh_popup(&ctx_reset.app, &ctx_reset.shell);
         }
@@ -1857,20 +1803,9 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
-            app.cfg.resize_window = true;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
         apply_metrics(&settings, &ctx_dev.app.borrow().cfg);
-        unlock_settings(&settings);
-        pin_settings_later(&ctx_dev, &settings);
-    });
-    let ctx_resize = ctx_from(ctx);
-    let settings_resize = settings.as_weak();
-    settings.on_resize_toggled(move |enabled| {
-        let Some(settings) = settings_resize.upgrade() else { return };
-        ctx_resize.app.borrow_mut().cfg.resize_window = enabled;
-        let _ = config::save_config(&ctx_resize.app.borrow().cfg, &config::config_path());
-        apply_resize(&settings);
     });
     let ctx_about = ctx_from(ctx);
     let settings_about = settings.as_weak();
