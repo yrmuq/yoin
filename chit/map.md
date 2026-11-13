@@ -8,7 +8,7 @@ Read only the row the task needs.
 - `src/client.rs` — the Home Assistant websocket: register, call a service, follow state.
 - `src/ha.rs` — service URLs and which domains toggle.
 - `src/config.rs` — `~/.config/yoin/config.json`.
-- `src/notices.rs` — the newest three notices.
+- `src/notices.rs` — the newest notices. The count is a setting, from 0 to 11.
 - `src/notify.rs` — a desktop notification on the session bus.
 - `src/place.rs` — where the window opens, and the KWin rule in `kwin/placer.js`.
 - `src/theme.rs` — the KDE color scheme and the font.
@@ -25,7 +25,7 @@ Read only the row the task needs.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
 - `.github/workflows/pins.yml` — `appimagetool` pin, Friday 09:00 UTC. Same prerelease path, not `main`.
 - `.github/workflows/sync-deps.yml` — on a push to `main`, updates `deps` from `main` and keeps commits that exist only on `deps`.
-- `packaging/release/` — version bump and notes. Not the program.
+- `packaging/release/` — version bump and notes. Not the program. The commands are Rust, in `packaging/tools`.
 
 ## Libraries
 - `slint` — the windows. FemtoVG draws them.

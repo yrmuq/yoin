@@ -156,6 +156,7 @@ fn main() {
             .expect("tray");
         (Arc::new(handle), placer_ok)
     });
+    let notes = loaded_notes(cfg.notice_limit);
     let ctx = Rc::new(Ctx {
         app: Rc::new(RefCell::new(App {
             cfg,
@@ -175,7 +176,7 @@ fn main() {
             placer_ok,
             place_warned: false,
             status: String::new(),
-            notes: notices::load(),
+            notes,
         })),
         shell: Rc::new(RefCell::new(Shell {
             settings: None,
@@ -264,6 +265,7 @@ fn main() {
                     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
                     let open = ctx_timer.app.borrow().popup_open;
                     let notes_up = notices_of(&ctx_timer.shell).is_some_and(|notes| notes.window().is_visible());
+                    let limit = ctx_timer.app.borrow().cfg.notice_limit as usize;
                     {
                         let mut app = ctx_timer.app.borrow_mut();
                         let dropped = notices::push(&mut app.notes, notices::Note {
@@ -273,7 +275,7 @@ fn main() {
                             image: String::new(),
                             fade: if open && notes_up { 0.0 } else { 1.0 },
                             closing: false,
-                        });
+                        }, limit);
                         notices::forget(&dropped);
                         notices::save(&app.notes);
                     }
@@ -293,7 +295,11 @@ fn main() {
                             Some(image) => notify::fetch_image(&base, &token, &image).await,
                             None => None,
                         };
-                        let stored = photo.as_deref().and_then(|path| notices::keep_shot(std::path::Path::new(path)));
+                        let stored = if limit > 0 {
+                            photo.as_deref().and_then(|path| notices::keep_shot(std::path::Path::new(path)))
+                        } else {
+                            None
+                        };
                         if let Some(path) = stored.clone() {
                             let _ = back.send(ClientEv::Shot { at, path });
                         }
@@ -816,7 +822,7 @@ fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
 fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f32) {
     let Some(popup) = popup_of(shell) else { return };
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { popup_scale(&popup) };
-    let (faces, tiles, button_size, pinned, notices_hidden) = {
+    let (faces, tiles, button_size, pinned, notices_hidden, notice_limit) = {
         let app = app.borrow();
         let unset = app.catalog.tr(12);
         let tiles = app.cfg.layout == "tiles";
@@ -842,12 +848,13 @@ fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f
                 icon: icon.map(|icon| icon.image).unwrap_or_default(),
             }
         }).collect();
-        (faces, tiles, app.cfg.button_size as f32, app.pinned, app.cfg.notices_hidden)
+        (faces, tiles, app.cfg.button_size as f32, app.pinned, app.cfg.notices_hidden, app.cfg.notice_limit as i32)
     };
     popup.set_tiles(tiles);
     popup.set_button_size(button_size);
     popup.set_pinned(pinned);
     popup.set_notices_hidden(notices_hidden);
+    popup.set_notice_limit(notice_limit);
     apply_header_icons(&popup);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
     sync_notices(app, shell);
@@ -878,7 +885,7 @@ fn sync_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
             }
         }).collect();
         let notice_h = notice_block(&app.notes);
-        let show_notes = app.popup_open && !app.cfg.notices_hidden && notice_h > 1.0;
+        let show_notes = app.popup_open && !app.cfg.notices_hidden && app.cfg.notice_limit > 0 && notice_h > 1.0;
         (rows, notice_h, show_notes)
     };
     let revealed = present_notices(app, shell, &popup, rows, notice_h, show_notes);
@@ -1049,6 +1056,16 @@ fn wire_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, notices: &No
     });
 }
 
+fn loaded_notes(limit: u32) -> Vec<notices::Note> {
+    let mut notes = notices::load();
+    let dropped = notices::trim(&mut notes, limit as usize);
+    notices::forget(&dropped);
+    if !dropped.is_empty() {
+        notices::save(&notes);
+    }
+    notes
+}
+
 fn notice_block(notes: &[notices::Note]) -> f32 {
     let count = notes.len();
     if count == 0 {
@@ -1206,6 +1223,8 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_layout(cat.tr(34).into());
     settings.set_t_size(cat.tr(37).into());
     settings.set_t_size_hint(cat.tr(39).into());
+    settings.set_t_notices(cat.tr(57).into());
+    settings.set_t_notices_hint(cat.tr(58).into());
     settings.set_t_rename(cat.tr(38).into());
     settings.set_t_about(cat.tr(51).into());
     settings.set_t_about_body(cat.tr(52).into());
@@ -1239,6 +1258,7 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_layout_names(ModelRc::new(VecModel::from(layout_names)));
     settings.set_layout_index(layout_index);
     settings.set_button_size_value(button_size);
+    settings.set_notice_limit_value(app.borrow().cfg.notice_limit as f32);
 }
 
 fn fill_rows(app: &Rc<RefCell<App>>, settings: &Settings) {
@@ -1523,6 +1543,32 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             refresh_popup(&ctx_z.app, &ctx_z.shell);
         }
     });
+    let ctx_count = ctx_from(ctx);
+    let settings_count = settings.as_weak();
+    settings.on_notice_limit(move |value| {
+        let limit = value.round().clamp(0.0, 11.0) as u32;
+        if let Some(settings) = settings_count.upgrade() {
+            settings.set_notice_limit_value(limit as f32);
+        }
+        if ctx_count.app.borrow().cfg.notice_limit == limit {
+            return;
+        }
+        let dropped = {
+            let mut app = ctx_count.app.borrow_mut();
+            app.cfg.notice_limit = limit;
+            let dropped = notices::trim(&mut app.notes, limit as usize);
+            let _ = config::save_config(&app.cfg, &config::config_path());
+            notices::save(&app.notes);
+            dropped
+        };
+        notices::forget(&dropped);
+        if limit == 0 {
+            stop_notice_slide(&ctx_count.shell);
+        }
+        if let Some(_popup) = popup_of(&ctx_count.shell) {
+            refresh_popup(&ctx_count.app, &ctx_count.shell);
+        }
+    });
     settings.on_open_source(move || {
         let _ = std::process::Command::new("xdg-open").arg("https://github.com/yrmuq/yoin").spawn();
     });
@@ -1587,6 +1633,9 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     });
     let ctx_notes = ctx_from(ctx);
     popup.on_notices_toggled(move || {
+        if ctx_notes.app.borrow().cfg.notice_limit == 0 {
+            return;
+        }
         let hide = !ctx_notes.app.borrow().cfg.notices_hidden;
         {
             let mut app = ctx_notes.app.borrow_mut();

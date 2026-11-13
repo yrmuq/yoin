@@ -27,6 +27,7 @@ pub struct Config {
     pub layout: String,
     pub button_size: u32,
     pub notices_hidden: bool,
+    pub notice_limit: u32,
 }
 
 impl Default for Config {
@@ -45,6 +46,7 @@ impl Default for Config {
             layout: "list".into(),
             button_size: 40,
             notices_hidden: false,
+            notice_limit: 3,
         }
     }
 }
@@ -96,6 +98,7 @@ pub fn normalize(mut cfg: Config) -> Config {
         cfg.layout = "list".into();
     }
     cfg.button_size = cfg.button_size.clamp(32, 80);
+    cfg.notice_limit = cfg.notice_limit.min(11);
     cfg.labels.truncate(MAX_BUTTONS);
     cfg.labels.resize(cfg.buttons.len(), String::new());
     for label in &mut cfg.labels {
@@ -204,6 +207,7 @@ mod tests {
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 40);
         assert!(!cfg.notices_hidden);
+        assert_eq!(cfg.notice_limit, 3);
         assert_eq!(cfg.labels, vec![String::new()]);
     }
 
@@ -217,5 +221,14 @@ mod tests {
         assert_eq!(cfg.labels, vec!["Lamp".to_string(), String::new()]);
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 80);
+    }
+
+    #[test]
+    fn notice_limit_defaults_to_three_and_stops_at_eleven() {
+        let cfg: Config = serde_json::from_str(r#"{"notice_limit":40}"#).unwrap();
+        let cfg = normalize(cfg);
+        assert_eq!(cfg.notice_limit, 11);
+        let cfg: Config = serde_json::from_str(r#"{"notice_limit":0}"#).unwrap();
+        assert_eq!(normalize(cfg).notice_limit, 0);
     }
 }

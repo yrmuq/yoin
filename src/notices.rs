@@ -12,8 +12,6 @@ use serde::{Deserialize, Serialize};
 use crate::config;
 use crate::i18n::Catalog;
 
-pub const LIMIT: usize = 3;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Note {
     pub title: String,
@@ -65,13 +63,25 @@ pub fn save(notes: &[Note]) {
     }
 }
 
-/// Keeps the newest three. Returns image files that are no longer used.
-pub fn push(notes: &mut Vec<Note>, note: Note) -> Vec<String> {
+/// Keeps the newest `limit` notices. Zero drops every notice, including the
+/// one just received. Returns image files that are no longer used.
+pub fn push(notes: &mut Vec<Note>, note: Note, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        let mut dropped = trim(notes, 0);
+        if !note.image.is_empty() {
+            dropped.push(note.image);
+        }
+        return dropped;
+    }
     notes.push(note);
-    if notes.len() <= LIMIT {
+    trim(notes, limit)
+}
+
+pub fn trim(notes: &mut Vec<Note>, limit: usize) -> Vec<String> {
+    if notes.len() <= limit {
         return Vec::new();
     }
-    let extra = notes.len() - LIMIT;
+    let extra = notes.len() - limit;
     let dropped: Vec<Note> = notes.drain(0..extra).collect();
     dropped.into_iter().map(|note| note.image).filter(|path| !path.is_empty()).collect()
 }
@@ -246,11 +256,19 @@ mod tests {
                     image: if n == 0 { "old.jpg".into() } else { String::new() },
                     fade: 1.0,
                     closing: false,
-                }));
+                }, 3));
             }
         assert_eq!(notes.len(), 3);
         assert_eq!(notes[0].title, "1");
         assert_eq!(dropped, vec!["old.jpg".to_string()]);
+    }
+
+    #[test]
+    fn zero_keeps_no_notices() {
+        let mut notes = vec![Note { title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into(), fade: 1.0, closing: false }];
+        let dropped = push(&mut notes, Note { title: "b".into(), message: String::new(), at: 2, image: String::new(), fade: 1.0, closing: false }, 0);
+        assert!(notes.is_empty());
+        assert_eq!(dropped, vec!["a.jpg".to_string()]);
     }
 
     #[test]

@@ -366,6 +366,7 @@ export component Popup inherits Window {
     in-out property <bool> tint-arrow-up: true;
     in-out property <bool> tint-arrow-down: true;
     in-out property <bool> notices-hidden: false;
+    in-out property <int> notice-limit: 3;
     property <length> gap: 6px;
     property <length> pad: 8px;
     property <length> tile: root.button-size * 2.05;
@@ -400,7 +401,7 @@ export component Popup inherits Window {
                     clicked => { root.open-home(); }
                     BreezeIcon { source: root.icon-open; tint: root.tint-open; ink: Breeze.fg; }
                 }
-                ToolButton {
+                if root.notice-limit > 0: ToolButton {
                     x: (parent.width - 32px) / 2;
                     clicked => { root.notices-toggled(); }
                     BreezeIcon {
@@ -624,6 +625,7 @@ export component Settings inherits Window {
     in-out property <int> theme-index;
     in-out property <int> layout-index;
     in-out property <float> button-size-value: 40;
+    in-out property <float> notice-limit-value: 3;
     in-out property <[string]> language-names;
     in-out property <[string]> theme-names;
     in-out property <[string]> layout-names;
@@ -643,6 +645,8 @@ export component Settings inherits Window {
     in-out property <string> t-layout;
     in-out property <string> t-size;
     in-out property <string> t-size-hint;
+    in-out property <string> t-notices;
+    in-out property <string> t-notices-hint;
     in-out property <string> t-rename;
     in-out property <string> t-about;
     in-out property <string> t-about-body;
@@ -664,6 +668,7 @@ export component Settings inherits Window {
     callback theme(int);
     callback layout(int);
     callback size-changed(float);
+    callback notice-limit(float);
     callback open-source();
     callback open-link(string);
     callback version-tapped();
@@ -828,6 +833,14 @@ export component Settings inherits Window {
                         changed(v) => { root.size-changed(v); }
                     }
                     Hint { text: root.t-size-hint; }
+                    Label { text: root.t-notices + ": " + Math.round(root.notice-limit-value); }
+                    notes := SizeSlider {
+                        minimum: 0;
+                        maximum: 11;
+                        value <=> root.notice-limit-value;
+                        changed(v) => { root.notice-limit(Math.round(v)); }
+                    }
+                    Hint { text: root.t-notices-hint; }
                 }
             }
             Tab {
