@@ -597,6 +597,61 @@ export component Notices inherits Window {
     }
 }
 
+component PartRow inherits VerticalLayout {
+    in property <string> name;
+    in property <string> upstream;
+    in property <string> detail;
+    in property <string> url;
+    callback open-link(string);
+    spacing: 0px;
+    HorizontalLayout {
+        spacing: 8px;
+        padding-top: 5px;
+        padding-bottom: 5px;
+        Text {
+            text: root.name;
+            width: 108px;
+            wrap: word-wrap;
+            color: Breeze.fg;
+            vertical-alignment: center;
+        }
+        Rectangle {
+            width: 148px;
+            background: transparent;
+            VerticalLayout {
+                alignment: center;
+                link := Rectangle {
+                    width: link-text.preferred-width;
+                    height: max(link-text.preferred-height, 18px);
+                    background: transparent;
+                    link-text := Text {
+                        text: root.upstream;
+                        color: Breeze.selection;
+                        vertical-alignment: center;
+                    }
+                    TouchArea {
+                        width: 100%;
+                        height: 100%;
+                        mouse-cursor: pointer;
+                        clicked => { root.open-link(root.url); }
+                    }
+                }
+            }
+        }
+        Text {
+            text: root.detail;
+            wrap: word-wrap;
+            horizontal-stretch: 1;
+            color: Breeze.fg;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle {
+        height: 1px;
+        background: Breeze.frame;
+    }
+}
+
 export component Settings inherits Window {
     in-out property <string> caption: "yoin";
     title: caption;
@@ -652,8 +707,6 @@ export component Settings inherits Window {
     in-out property <string> t-about-body;
     in-out property <string> t-repository;
     in-out property <string> t-version-label;
-    in-out property <string> t-thanks;
-    in-out property <string> t-and;
     in-out property <string> t-source;
     callback connect();
     callback save();
@@ -918,55 +971,62 @@ export component Settings inherits Window {
                         vertical-stretch: 1;
                         background: transparent;
                     }
-                    HorizontalLayout {
-                        spacing: 4px;
-                        alignment: start;
-                        Text {
-                            text: root.t-thanks;
-                            color: Breeze.fg;
-                            vertical-alignment: center;
-                        }
-                        Text {
-                            text: "♥";
-                            color: Breeze.selection;
-                            vertical-alignment: center;
-                        }
-                        slint-link := Rectangle {
-                            width: slint-text.preferred-width;
-                            height: max(slint-text.preferred-height, 22px);
-                            background: transparent;
-                            slint-text := Text {
-                                text: "Slint";
-                                color: Breeze.selection;
-                                vertical-alignment: center;
+                    VerticalLayout {
+                        spacing: 0px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            padding-bottom: 4px;
+                            Text {
+                                text: "Component";
+                                font-weight: 700;
+                                width: 108px;
+                                color: Breeze.fg;
                             }
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                mouse-cursor: pointer;
-                                clicked => { root.open-link("https://slint.dev"); }
+                            Text {
+                                text: "Upstream";
+                                font-weight: 700;
+                                width: 148px;
+                                color: Breeze.fg;
+                            }
+                            Text {
+                                text: "Integration Details";
+                                font-weight: 700;
+                                horizontal-stretch: 1;
+                                wrap: word-wrap;
+                                color: Breeze.fg;
                             }
                         }
-                        Text {
-                            text: root.t-and;
-                            color: Breeze.fg;
-                            vertical-alignment: center;
+                        Rectangle {
+                            height: 1px;
+                            background: Breeze.frame;
                         }
-                        ksni-link := Rectangle {
-                            width: ksni-text.preferred-width;
-                            height: max(ksni-text.preferred-height, 22px);
-                            background: transparent;
-                            ksni-text := Text {
-                                text: "ksni";
-                                color: Breeze.selection;
-                                vertical-alignment: center;
-                            }
-                            TouchArea {
-                                width: 100%;
-                                height: 100%;
-                                mouse-cursor: pointer;
-                                clicked => { root.open-link("https://github.com/iovxw/ksni"); }
-                            }
+                        PartRow {
+                            name: "slint";
+                            upstream: "slint-ui/slint";
+                            detail: "The windows. FemtoVG draws them. Linked into the binary.";
+                            url: "https://github.com/slint-ui/slint";
+                            open-link(url) => { root.open-link(url); }
+                        }
+                        PartRow {
+                            name: "ksni";
+                            upstream: "iovxw/ksni";
+                            detail: "The StatusNotifier tray icon. Linked into the binary.";
+                            url: "https://github.com/iovxw/ksni";
+                            open-link(url) => { root.open-link(url); }
+                        }
+                        PartRow {
+                            name: "resvg";
+                            upstream: "linebender/resvg";
+                            detail: "Draws the one icon that has to be rotated. Linked into the binary.";
+                            url: "https://github.com/linebender/resvg";
+                            open-link(url) => { root.open-link(url); }
+                        }
+                        PartRow {
+                            name: "Breeze icons";
+                            upstream: "KDE/breeze-icons";
+                            detail: "The button icons in ui/icons. Copied, not linked.";
+                            url: "https://github.com/KDE/breeze-icons";
+                            open-link(url) => { root.open-link(url); }
                         }
                     }
                 }

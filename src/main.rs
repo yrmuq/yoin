@@ -1230,8 +1230,6 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_about_body(cat.tr(52).into());
     settings.set_t_repository(cat.tr(53).into());
     settings.set_t_version_label(cat.tr(54).into());
-    settings.set_t_thanks(cat.tr(55).into());
-    settings.set_t_and(cat.tr(56).into());
     settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
@@ -1574,7 +1572,13 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     });
     settings.on_open_link(move |url| {
         let url = url.to_string();
-        let allowed = url == "https://slint.dev" || url == "https://github.com/iovxw/ksni";
+        let allowed = [
+            "https://github.com/slint-ui/slint",
+            "https://github.com/iovxw/ksni",
+            "https://github.com/linebender/resvg",
+            "https://github.com/KDE/breeze-icons",
+        ]
+        .contains(&url.as_str());
         if allowed {
             let _ = std::process::Command::new("xdg-open").arg(url).spawn();
         }
