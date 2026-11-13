@@ -709,6 +709,7 @@ export component Settings inherits Window {
     in-out property <int> settings-width: 1120;
     in-out property <int> settings-height: 1280;
     in-out property <int> logo-size: 96;
+    in-out property <bool> resize-window: true;
     in-out property <int> page: 0;
     changed page => {
         if (root.page == 3) {
@@ -757,6 +758,7 @@ export component Settings inherits Window {
     in-out property <string> t-window-width;
     in-out property <string> t-window-height;
     in-out property <string> t-logo-size;
+    in-out property <string> t-resize;
     in-out property <string> t-source;
     callback connect();
     callback save();
@@ -780,8 +782,9 @@ export component Settings inherits Window {
     callback metrics-changed();
     callback reset-appearance();
     callback reset-dev();
-    width: root.settings-width * 1px;
-    height: root.settings-height * 1px;
+    callback resize-toggled(bool);
+    preferred-width: root.settings-width * 1px;
+    preferred-height: root.settings-height * 1px;
     background: Breeze.window;
     VerticalBox {
         padding: 12px;
@@ -1123,6 +1126,11 @@ export component Settings inherits Window {
                     alignment: start;
                     padding: 8px;
                     spacing: 6px;
+                    resize-box := CheckBox {
+                        text: root.t-resize;
+                        checked <=> root.resize-window;
+                        toggled => { root.resize-toggled(resize-box.checked); }
+                    }
                     Label { text: root.t-window-width; }
                     SpinBox {
                         minimum: 360;

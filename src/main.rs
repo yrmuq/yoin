@@ -702,14 +702,14 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
         settings.set_dev_report(dev_icon_report(&ctx.app.borrow()).into());
     }
     raise_settings(ctx, settings);
-    lock_settings(settings);
+    apply_resize(settings);
     let weak = settings.as_weak();
     let ctx_kick = ctx_from(ctx);
     let kick = slint::Timer::default();
     kick.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
             raise_settings(&ctx_kick, &settings);
-            lock_settings(&settings);
+            apply_resize(&settings);
         }
     });
     ctx.shell.borrow_mut().raise_timer = Some(kick);
@@ -739,12 +739,20 @@ fn unlock_settings(settings: &Settings) {
     });
 }
 
+fn apply_resize(settings: &Settings) {
+    if settings.get_resize_window() {
+        unlock_settings(settings);
+    } else {
+        lock_settings(settings);
+    }
+}
+
 fn pin_settings_later(ctx: &Ctx, settings: &Settings) {
     let weak = settings.as_weak();
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::SingleShot, Duration::from_millis(50), move || {
         if let Some(settings) = weak.upgrade() {
-            lock_settings(&settings);
+            apply_resize(&settings);
         }
     });
     ctx.shell.borrow_mut().lock_timer = Some(timer);
@@ -755,6 +763,7 @@ fn apply_metrics(settings: &Settings, cfg: &Config) {
     settings.set_settings_height(cfg.settings_height as i32);
     settings.set_logo_size(cfg.logo_size as i32);
     settings.set_dev_open(cfg.dev_tab);
+    settings.set_resize_window(cfg.resize_window);
 }
 
 fn apply_header_icons(popup: &Popup) {
@@ -1394,6 +1403,7 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_window_width(cat.tr(64).into());
     settings.set_t_window_height(cat.tr(65).into());
     settings.set_t_logo_size(cat.tr(66).into());
+    settings.set_t_resize(cat.tr(67).into());
     settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
@@ -1814,6 +1824,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
             app.cfg.dev_tab = false;
+            app.cfg.resize_window = true;
             let dropped = notices::trim(&mut app.notes, 3);
             let _ = config::save_config(&app.cfg, &config::config_path());
             notices::save(&app.notes);
@@ -1846,11 +1857,20 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            app.cfg.resize_window = true;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
         apply_metrics(&settings, &ctx_dev.app.borrow().cfg);
         unlock_settings(&settings);
         pin_settings_later(&ctx_dev, &settings);
+    });
+    let ctx_resize = ctx_from(ctx);
+    let settings_resize = settings.as_weak();
+    settings.on_resize_toggled(move |enabled| {
+        let Some(settings) = settings_resize.upgrade() else { return };
+        ctx_resize.app.borrow_mut().cfg.resize_window = enabled;
+        let _ = config::save_config(&ctx_resize.app.borrow().cfg, &config::config_path());
+        apply_resize(&settings);
     });
     let ctx_about = ctx_from(ctx);
     let settings_about = settings.as_weak();

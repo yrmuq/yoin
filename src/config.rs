@@ -39,6 +39,8 @@ pub struct Config {
     pub logo_size: u32,
     #[serde(default, skip_serializing_if = "is_false")]
     pub dev_tab: bool,
+    #[serde(default = "default_resize", skip_serializing_if = "is_true")]
+    pub resize_window: bool,
 }
 
 impl Default for Config {
@@ -62,6 +64,7 @@ impl Default for Config {
             settings_height: DEFAULT_SETTINGS_HEIGHT,
             logo_size: DEFAULT_LOGO_SIZE,
             dev_tab: false,
+            resize_window: true,
         }
     }
 }
@@ -141,6 +144,14 @@ fn is_default_logo_size(value: &u32) -> bool {
 
 fn is_false(value: &bool) -> bool {
     !*value
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
+fn default_resize() -> bool {
+    true
 }
 
 pub fn align_labels(cfg: &mut Config) {
@@ -273,12 +284,17 @@ mod tests {
         assert!(!json.contains("settings_height"));
         assert!(!json.contains("logo_size"));
         assert!(!json.contains("dev_tab"));
+        assert!(!json.contains("resize_window"));
         let mut cfg = Config::default();
         cfg.settings_width = 700;
         cfg.dev_tab = true;
         let json = serde_json::to_string(&normalize(cfg)).unwrap();
         assert!(json.contains("\"settings_width\":700"));
         assert!(json.contains("\"dev_tab\":true"));
+        let mut cfg = Config::default();
+        cfg.resize_window = false;
+        let json = serde_json::to_string(&normalize(cfg)).unwrap();
+        assert!(json.contains("\"resize_window\":false"));
         let cfg: Config = serde_json::from_str(
             r#"{"settings_width":10,"settings_height":5000,"logo_size":1}"#,
         )
