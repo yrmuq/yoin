@@ -931,12 +931,12 @@ export component Settings inherits Window {
                             color: Breeze.selection;
                             vertical-alignment: center;
                         }
-                        ha := Rectangle {
-                            width: ha-text.preferred-width;
-                            height: max(ha-text.preferred-height, 22px);
+                        slint-link := Rectangle {
+                            width: slint-text.preferred-width;
+                            height: max(slint-text.preferred-height, 22px);
                             background: transparent;
-                            ha-text := Text {
-                                text: "Home Assistant";
+                            slint-text := Text {
+                                text: "Slint";
                                 color: Breeze.selection;
                                 vertical-alignment: center;
                             }
@@ -944,7 +944,7 @@ export component Settings inherits Window {
                                 width: 100%;
                                 height: 100%;
                                 mouse-cursor: pointer;
-                                clicked => { root.open-link("https://www.home-assistant.io"); }
+                                clicked => { root.open-link("https://slint.dev"); }
                             }
                         }
                         Text {
@@ -952,12 +952,12 @@ export component Settings inherits Window {
                             color: Breeze.fg;
                             vertical-alignment: center;
                         }
-                        kde := Rectangle {
-                            width: kde-text.preferred-width;
-                            height: max(kde-text.preferred-height, 22px);
+                        ksni-link := Rectangle {
+                            width: ksni-text.preferred-width;
+                            height: max(ksni-text.preferred-height, 22px);
                             background: transparent;
-                            kde-text := Text {
-                                text: "KDE";
+                            ksni-text := Text {
+                                text: "ksni";
                                 color: Breeze.selection;
                                 vertical-alignment: center;
                             }
@@ -965,7 +965,7 @@ export component Settings inherits Window {
                                 width: 100%;
                                 height: 100%;
                                 mouse-cursor: pointer;
-                                clicked => { root.open-link("https://kde.org"); }
+                                clicked => { root.open-link("https://github.com/iovxw/ksni"); }
                             }
                         }
                     }

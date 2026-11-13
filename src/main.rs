@@ -1574,7 +1574,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     });
     settings.on_open_link(move |url| {
         let url = url.to_string();
-        let allowed = url == "https://www.home-assistant.io" || url == "https://kde.org";
+        let allowed = url == "https://slint.dev" || url == "https://github.com/iovxw/ksni";
         if allowed {
             let _ = std::process::Command::new("xdg-open").arg(url).spawn();
         }
