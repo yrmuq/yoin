@@ -32,9 +32,9 @@ if [ -n "$latest" ]; then
     git log "${latest}..HEAD" --format='%s'
 else
     git log --format='%s'
-fi | python3 packaging/release/notes.py commits > notes.md
+fi | sh packaging/release/tool.sh notes commits > notes.md
 
-python3 packaging/release/bump.py "$new"
+sh packaging/release/tool.sh bump "$new"
 export GIT_AUTHOR_NAME="${GIT_AUTHOR_NAME:-github-actions[bot]}"
 export GIT_AUTHOR_EMAIL="${GIT_AUTHOR_EMAIL:-41898282+github-actions[bot]@users.noreply.github.com}"
 export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"

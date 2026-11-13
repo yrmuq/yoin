@@ -95,17 +95,7 @@ UPDATE="gh-releases-zsync|yrmuq|yoin|latest|yoin-x86_64.AppImage.zsync"
 ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 "$TOOL" -u "$UPDATE" "$APPDIR" "$OUT"
 chmod +x "$OUT"
 echo "checking update information"
-python3 - "$OUT" "$UPDATE" << 'PY'
-import sys
-path, needle = sys.argv[1], sys.argv[2].encode()
-data = open(path, "rb").read()
-if needle not in data:
-    spot = data.find(b"zsync")
-    near = data[max(0, spot - 40):spot + 160] if spot >= 0 else b""
-    sys.stderr.write("update information was not embedded\n")
-    sys.stderr.write(repr(near) + "\n")
-    sys.exit(1)
-PY
+sh "$ROOT/packaging/release/tool.sh" embedded "$OUT" "$UPDATE"
 zsync_file="$(find "$ROOT" "$DIST" -maxdepth 2 -name 'yoin-x86_64.AppImage.zsync' -print -quit)"
 if [ -z "$zsync_file" ]; then
     echo "zsync file was not written" >&2

@@ -22,6 +22,8 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Tag the next minor
         id: tag
         env:
@@ -35,9 +37,6 @@ jobs:
             [0-9]*.[0-9]*.0) echo "version=${ver}" >> "$GITHUB_OUTPUT" ;;
             *) echo "version=" >> "$GITHUB_OUTPUT" ;;
           esac
-
-      - uses: dtolnay/rust-toolchain@stable
-        if: steps.tag.outputs.version != ''
 
       - name: Libraries
         if: steps.tag.outputs.version != ''
