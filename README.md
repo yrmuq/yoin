@@ -78,3 +78,4 @@ Flatpak support is planned.
 | `slint` | [slint-ui/slint](https://github.com/slint-ui/slint) | `GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0` | The windows. FemtoVG draws them. Linked into the binary. |
 | `ksni` | [iovxw/ksni](https://github.com/iovxw/ksni) | `Unlicense` | The StatusNotifier tray icon. Linked into the binary. |
 | `resvg` | [linebender/resvg](https://github.com/linebender/resvg) | `Apache-2.0 OR MIT` | Draws the one icon that has to be rotated. Linked into the binary. |
+| Breeze icons | [KDE/breeze-icons](https://github.com/KDE/breeze-icons) | `LGPL-3.0-or-later`. `open-link.svg` is `LGPL-3.0-only OR LicenseRef-KDE-Accepted-LGPL` | The button icons in `ui/icons`. Copied, not linked. |
