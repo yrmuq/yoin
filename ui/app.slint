@@ -780,12 +780,8 @@ export component Settings inherits Window {
     callback metrics-changed();
     callback reset-appearance();
     callback reset-dev();
-    preferred-width: root.settings-width * 1px;
-    preferred-height: root.settings-height * 1px;
-    min-width: root.settings-width * 1px;
-    max-width: root.settings-width * 1px;
-    min-height: root.settings-height * 1px;
-    max-height: root.settings-height * 1px;
+    width: root.settings-width * 1px;
+    height: root.settings-height * 1px;
     background: Breeze.window;
     VerticalBox {
         padding: 12px;
@@ -825,6 +821,8 @@ export component Settings inherits Window {
                 height: 1px;
                 background: Breeze.frame;
             }
+            ScrollView {
+                vertical-stretch: 1;
             if root.page == 0: VerticalBox {
                     alignment: start;
                     padding: 8px;
@@ -852,8 +850,7 @@ export component Settings inherits Window {
                     }
                     Hint { text: root.status; }
                 }
-            if root.page == 1: ScrollView {
-                    VerticalBox {
+            if root.page == 1: VerticalBox {
                         alignment: start;
                         padding: 8px;
                         spacing: 6px;
@@ -935,7 +932,6 @@ export component Settings inherits Window {
                             clicked => { root.add(); }
                         }
                     }
-                }
             if root.page == 2: VerticalBox {
                     alignment: start;
                     padding: 8px;
@@ -1148,24 +1144,18 @@ export component Settings inherits Window {
                         value <=> root.logo-size;
                         edited => { root.metrics-changed(); }
                     }
-                    Flickable {
-                        vertical-stretch: 1;
-                        min-height: 80px;
-                        content-height: report.preferred-height;
-                        report := Text {
-                            x: 0px;
-                            y: 0px;
-                            text: root.dev-report;
-                            wrap: no-wrap;
-                            width: parent.width;
-                            color: Breeze.fg;
-                        }
+                    Text {
+                        text: root.dev-report;
+                        wrap: word-wrap;
+                        width: 100%;
+                        color: Breeze.fg;
                     }
                     Button {
                         text: root.t-reset;
                         clicked => { root.reset-dev(); }
                     }
                 }
+            }
         }
     }
 }
