@@ -9,8 +9,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_BUTTONS: usize = 10;
-pub const DEFAULT_SETTINGS_WIDTH: u32 = 560;
-pub const DEFAULT_SETTINGS_HEIGHT: u32 = 640;
+pub const DEFAULT_SETTINGS_WIDTH: u32 = 1120;
+pub const DEFAULT_SETTINGS_HEIGHT: u32 = 1280;
 pub const DEFAULT_LOGO_SIZE: u32 = 96;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
@@ -114,8 +114,8 @@ pub fn normalize(mut cfg: Config) -> Config {
     }
     cfg.button_size = cfg.button_size.clamp(32, 80);
     cfg.notice_limit = cfg.notice_limit.min(11);
-    cfg.settings_width = cfg.settings_width.clamp(360, 1100);
-    cfg.settings_height = cfg.settings_height.clamp(240, 900);
+    cfg.settings_width = cfg.settings_width.clamp(360, 2200);
+    cfg.settings_height = cfg.settings_height.clamp(240, 1800);
     cfg.logo_size = cfg.logo_size.clamp(32, 256);
     cfg.labels.truncate(MAX_BUTTONS);
     cfg.labels.resize(cfg.buttons.len(), String::new());
@@ -285,7 +285,7 @@ mod tests {
         .unwrap();
         let cfg = normalize(cfg);
         assert_eq!(cfg.settings_width, 360);
-        assert_eq!(cfg.settings_height, 900);
+        assert_eq!(cfg.settings_height, 1800);
         assert_eq!(cfg.logo_size, 32);
     }
 }

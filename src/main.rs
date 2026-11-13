@@ -716,13 +716,18 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
 }
 
 fn lock_settings(settings: &Settings) {
+    let width = settings.get_settings_width().max(1) as f64;
+    let height = settings.get_settings_height().max(1) as f64;
     let _ = settings.window().with_winit_window(|window| {
+        let scale = window.scale_factor();
+        let size = winit::dpi::PhysicalSize::new(
+            (width * scale).round().max(1.0) as u32,
+            (height * scale).round().max(1.0) as u32,
+        );
+        let _ = window.request_inner_size(size);
         window.set_resizable(false);
-        let size = window.inner_size();
-        if size.width > 0 && size.height > 0 {
-            window.set_min_inner_size(Some(size));
-            window.set_max_inner_size(Some(size));
-        }
+        window.set_min_inner_size(Some(size));
+        window.set_max_inner_size(Some(size));
     });
 }
 
@@ -1773,8 +1778,8 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     let settings_metrics = settings.as_weak();
     settings.on_metrics_changed(move || {
         let Some(settings) = settings_metrics.upgrade() else { return };
-        let width = settings.get_settings_width().clamp(360, 1100) as u32;
-        let height = settings.get_settings_height().clamp(240, 900) as u32;
+        let width = settings.get_settings_width().clamp(360, 2200) as u32;
+        let height = settings.get_settings_height().clamp(240, 1800) as u32;
         let logo = settings.get_logo_size().clamp(32, 256) as u32;
         let changed = {
             let cfg = &ctx_metrics.app.borrow().cfg;

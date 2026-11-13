@@ -706,8 +706,8 @@ export component Settings inherits Window {
     in-out property <string> version;
     in-out property <bool> dev-open: false;
     in-out property <string> dev-report;
-    in-out property <int> settings-width: 560;
-    in-out property <int> settings-height: 640;
+    in-out property <int> settings-width: 1120;
+    in-out property <int> settings-height: 1280;
     in-out property <int> logo-size: 96;
     in-out property <int> page: 0;
     changed page => {
@@ -1130,14 +1130,14 @@ export component Settings inherits Window {
                     Label { text: root.t-window-width; }
                     SpinBox {
                         minimum: 360;
-                        maximum: 1100;
+                        maximum: 2200;
                         value <=> root.settings-width;
                         edited => { root.metrics-changed(); }
                     }
                     Label { text: root.t-window-height; }
                     SpinBox {
                         minimum: 240;
-                        maximum: 900;
+                        maximum: 1800;
                         value <=> root.settings-height;
                         edited => { root.metrics-changed(); }
                     }
