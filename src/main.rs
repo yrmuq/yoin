@@ -70,6 +70,7 @@ struct Shell {
     raise_timer: Option<slint::Timer>,
     notice_timer: Option<Rc<slint::Timer>>,
     notices: Option<Notices>,
+    notices_creating: bool,
 }
 
 struct Ctx {
@@ -168,6 +169,7 @@ fn main() {
             raise_timer: None,
             notice_timer: None,
             notices: None,
+            notices_creating: false,
         })),
         client_tx: client_tx.clone(),
         view: view.clone(),
@@ -179,8 +181,7 @@ fn main() {
         let _ = config::apply_autostart(true, &config::autostart_path());
     }
     if ctx.app.borrow().cfg.url.is_empty() || ctx.app.borrow().cfg.token.is_empty() {
-        let settings = ensure_settings(&ctx);
-        present_settings(&ctx, &settings);
+        open_settings(&ctx);
     } else {
         start_client(&ctx.app, &ctx.client_tx);
     }
@@ -194,8 +195,7 @@ fn main() {
         while let Ok(cmd) = tray_rx.try_recv() {
             match cmd {
                 TrayCmd::Settings => {
-                    let settings = ensure_settings(&ctx_timer);
-                    present_settings(&ctx_timer, &settings);
+                    open_settings(&ctx_timer);
                 }
                 TrayCmd::Toggle => toggles += 1,
             }
@@ -438,7 +438,21 @@ fn paint_theme(ctx: &Ctx) {
     apply_theme(&ctx.app, settings.as_ref(), popup.as_ref(), notices.as_ref(), &ctx.view, &ctx.tray, &ctx.rt);
 }
 
-fn ensure_settings(ctx: &Ctx) -> Settings {
+fn open_settings(ctx: &Ctx) {
+    if let Some(settings) = settings_of(&ctx.shell) {
+        present_settings(ctx, &settings);
+        return;
+    }
+    let ctx = ctx_from(ctx);
+    let _ = slint::spawn_local(async move {
+        windows::create("yoin", || {
+            if settings_of(&ctx.shell).is_some() { None } else { Some(build_settings(&ctx)) }
+        }).await;
+        if let Some(settings) = settings_of(&ctx.shell) { present_settings(&ctx, &settings); }
+    });
+}
+
+fn build_settings(ctx: &Ctx) -> Settings {
     if let Some(settings) = settings_of(&ctx.shell) {
         return settings;
     }
@@ -485,7 +499,7 @@ fn ensure_settings(ctx: &Ctx) -> Settings {
     settings
 }
 
-fn ensure_popup(ctx: &Ctx) -> Popup {
+fn build_popup(ctx: &Ctx) -> Popup {
     if let Some(popup) = popup_of(&ctx.shell) {
         return popup;
     }
@@ -548,6 +562,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     paint_theme(ctx);
     refresh_popup(&ctx.app, &ctx.shell);
     wire_popup(ctx, &popup);
+    popup.set_slide(popup.get_layout_height());
     popup
 }
 
@@ -728,6 +743,7 @@ fn apply_metrics(settings: &Settings, cfg: &Config) {
     settings.set_settings_width(cfg.settings_width as i32);
     settings.set_settings_height(cfg.settings_height as i32);
     settings.set_logo_size(cfg.logo_size as i32);
+    settings.set_button_icon_scale(cfg.button_icon_scale as i32);
     settings.set_lock_window_size(cfg.lock_window_size);
     settings.set_dev_open(cfg.dev_tab);
     let _ = settings.window().with_winit_window(|window| {
@@ -803,7 +819,6 @@ fn open_home(ctx: &Ctx) {
 }
 
 fn toggle_popup(ctx: &Ctx) -> bool {
-    let popup = ensure_popup(ctx);
     if ctx.app.borrow().popup_open {
         hide_popup(ctx);
         return false;
@@ -816,22 +831,33 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         app.close_popup = false;
         app.popup_at = Instant::now();
     }
-    refresh_popup(&ctx.app, &ctx.shell);
-    popup.set_pinned(ctx.app.borrow().pinned);
-    let height = popup.get_layout_height();
-    popup.set_slide(if height > 1.0 { height } else { 0.0 });
-    let ready = ctx_from(ctx);
-    let visibility = ctx.shell.borrow().popup_visibility.clone();
-    visibility.show_ready(&popup, POPUP_CLASS, move |popup| {
-        if !ready.app.borrow().popup_open || ready.app.borrow().closing { return; }
-        ready.app.borrow_mut().popup_at = Instant::now();
-        let _ = popup.window().with_winit_window(|window| {
-            window.focus_window();
+    let opening = ctx_from(ctx);
+    let _ = slint::spawn_local(async move {
+        let ctx = opening;
+        if popup_of(&ctx.shell).is_none() {
+            windows::create(POPUP_CLASS, || {
+                if popup_of(&ctx.shell).is_some() { None } else { Some(build_popup(&ctx)) }
+            }).await;
+        }
+        let Some(popup) = popup_of(&ctx.shell) else { return };
+        if !ctx.app.borrow().popup_open || ctx.app.borrow().closing { return; }
+        refresh_popup(&ctx.app, &ctx.shell);
+        popup.set_pinned(ctx.app.borrow().pinned);
+        let height = popup.get_layout_height();
+        popup.set_slide(if height > 1.0 { height } else { 0.0 });
+        let ready = ctx_from(&ctx);
+        let visibility = ctx.shell.borrow().popup_visibility.clone();
+        visibility.show_ready(&popup, POPUP_CLASS, move |popup| {
+            if !ready.app.borrow().popup_open || ready.app.borrow().closing { return; }
+            ready.app.borrow_mut().popup_at = Instant::now();
+            let _ = popup.window().with_winit_window(|window| {
+                window.focus_window();
+            });
+            sharpen_popup(&popup);
+            size_panel(popup.window(), popup.get_layout_width(), popup.get_layout_height());
+            sync_notices(&ready.app, &ready.shell);
+            start_slide(&ready, &popup);
         });
-        sharpen_popup(&popup);
-        size_panel(popup.window(), popup.get_layout_width(), popup.get_layout_height());
-        sync_notices(&ready.app, &ready.shell);
-        start_slide(&ready, &popup);
     });
     if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
         ctx.app.borrow_mut().place_warned = true;
@@ -870,12 +896,7 @@ fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f
         let app = app.borrow();
         let unset = app.catalog.tr(12);
         let tiles = app.cfg.layout == "tiles";
-        let button = app.cfg.button_size as f32;
-        let logical = if tiles {
-            (button * 2.05 * 0.32).max(16.0)
-        } else {
-            20.0_f32.min(button * 0.46)
-        };
+        let logical = config::button_icon_edge(&app.cfg);
         let edge = icon_px(logical, scale);
         let faces: Vec<Face> = app.cfg.buttons.iter().enumerate().map(|(index, id)| {
             let known = app.entities.get(id);
@@ -897,6 +918,7 @@ fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f
     };
     popup.set_tiles(tiles);
     popup.set_button_size(button_size);
+    popup.set_icon_size(config::button_icon_edge(&app.borrow().cfg));
     popup.set_pinned(pinned);
     popup.set_notices_hidden(notices_hidden);
     popup.set_notice_limit(notice_limit);
@@ -947,8 +969,28 @@ fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &P
         hide_notices(shell);
         return;
     }
-    let notices = ensure_notices(app, shell);
     let width = popup.get_layout_width();
+    if notices_of(shell).is_none() {
+        if shell.borrow().notices_creating { return; }
+        shell.borrow_mut().notices_creating = true;
+        let app = app.clone();
+        let shell = shell.clone();
+        let _ = slint::spawn_local(async move {
+            windows::create(NOTICES_CLASS, || {
+                let notices = build_notices(&app, &shell);
+                notices.set_pane_width(width);
+                notices.set_notice_h(notice_h);
+                notices.set_notices(ModelRc::new(VecModel::from(rows)));
+                notices.set_slide(notice_h);
+                size_panel(notices.window(), width, notice_h);
+                Some(notices)
+            }).await;
+            shell.borrow_mut().notices_creating = false;
+            sync_notices(&app, &shell);
+        });
+        return;
+    }
+    let notices = notices_of(shell).unwrap();
     if (notices.get_pane_width() - width).abs() > 0.5 {
         notices.set_pane_width(width);
     }
@@ -1040,7 +1082,7 @@ fn slide_notices(shell: &Rc<RefCell<Shell>>, open: bool) {
     shell.borrow_mut().notice_slide = Some(timer);
 }
 
-fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
+fn build_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
     if let Some(existing) = notices_of(shell) {
         return existing;
     }
@@ -1391,6 +1433,8 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_auto_check_updates(cat.tr(101).into());
     settings.set_t_check_update(cat.tr(102).into());
     settings.set_t_icon_sources(cat.tr(103).into());
+    settings.set_t_button_icon_scale(cat.tr(104).into());
+    settings.set_t_button_icon_hint(cat.tr(105).into());
     settings.set_t_connection(cat.tr(10).into());
     settings.set_t_devices(cat.tr(11).into());
     settings.set_t_general(cat.tr(18).into());
@@ -1822,9 +1866,10 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         let width = settings.get_settings_width().clamp(360, 2200) as u32;
         let height = settings.get_settings_height().clamp(240, 1800) as u32;
         let logo = settings.get_logo_size().clamp(32, 256) as u32;
+        let icon_scale = settings.get_button_icon_scale().clamp(50, 200) as u32;
         let changed = {
             let cfg = &ctx_metrics.app.borrow().cfg;
-            cfg.settings_width != width || cfg.settings_height != height || cfg.logo_size != logo
+            cfg.settings_width != width || cfg.settings_height != height || cfg.logo_size != logo || cfg.button_icon_scale != icon_scale
         };
         if !changed {
             return;
@@ -1834,9 +1879,11 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_width = width;
             app.cfg.settings_height = height;
             app.cfg.logo_size = logo;
+            app.cfg.button_icon_scale = icon_scale;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
         apply_metrics(&settings, &ctx_metrics.app.borrow().cfg);
+        refresh_popup(&ctx_metrics.app, &ctx_metrics.shell);
     });
     let ctx_lock = ctx_from(ctx);
     let settings_lock = settings.as_weak();
@@ -1860,6 +1907,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            app.cfg.button_icon_scale = config::DEFAULT_BUTTON_ICON_SCALE;
             app.cfg.lock_window_size = true;
             app.cfg.dev_tab = false;
             let dropped = notices::trim(&mut app.notes, 3);
@@ -1892,12 +1940,14 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            app.cfg.button_icon_scale = config::DEFAULT_BUTTON_ICON_SCALE;
             app.cfg.lock_window_size = true;
             app.cfg.auto_check_updates = true;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
         settings.set_auto_check_updates(true);
         apply_metrics(&settings, &ctx_dev.app.borrow().cfg);
+        refresh_popup(&ctx_dev.app, &ctx_dev.shell);
     });
     let app_auto = ctx.app.clone();
     settings.on_auto_check_updates_changed(move |enabled| {
@@ -1959,8 +2009,7 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     popup.on_pressed(move |index| {
         let entity = app_p.borrow().cfg.buttons.get(index as usize).cloned().unwrap_or_default();
         if entity.is_empty() {
-            let settings = ensure_settings(&ctx_p);
-            present_settings(&ctx_p, &settings);
+            open_settings(&ctx_p);
             return;
         }
         let state = app_p.borrow().entities.get(&entity).map(|e| e.state.clone()).unwrap_or_default();
@@ -1968,8 +2017,7 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     });
     let ctx_c = ctx_from(ctx);
     popup.on_configure(move || {
-        let settings = ensure_settings(&ctx_c);
-        present_settings(&ctx_c, &settings);
+        open_settings(&ctx_c);
     });
     let ctx_h = ctx_from(ctx);
     popup.on_open_home(move || open_home(&ctx_h));

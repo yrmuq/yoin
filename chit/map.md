@@ -4,7 +4,7 @@ Read only the row the task needs.
 
 ## Own code
 - `src/main.rs` — starts the tray, the button window, notices, and settings.
-- `src/windows.rs` — sets initial panel attributes, serializes native window creation, preserves each taskbar class, and runs panel setup after the native window has rendered its first frame.
+- `src/windows.rs` — sets initial panel attributes, serializes component construction and native window creation, preserves each taskbar class, and runs panel setup after the native window has rendered its first frame.
 - `src/tray.rs` — the StatusNotifier icon. Left click toggles the window.
 - `src/client.rs` — the Home Assistant websocket: register, call a service, follow state.
 - `src/ha.rs` — service URLs and which domains toggle.

@@ -446,12 +446,14 @@ mod tests {
     }
 
     #[test]
-    fn alarm_badges_keep_their_breeze_status_colors() {
-        for (on, name, rgb) in [(true, "security-high", [39, 174, 96]), (false, "security-low", [218, 68, 83])] {
+    fn alarm_shields_keep_their_full_breeze_status_colors() {
+        for on in [true, false] {
             let icon = button_icon("alarm_control_panel", on, 44).unwrap();
-            assert!(!icon.tint, "{name} must not be flattened by colorize");
-            let pixels = svg_image(bundled(name).unwrap(), 88).unwrap().to_rgba8().unwrap();
-            assert!(pixels.as_bytes().chunks_exact(4).any(|pixel| pixel[..3] == rgb && pixel[3] == 255));
+            assert!(!icon.tint, "the full-color shield must not be flattened by colorize");
+            let pixels = svg_image(bundled(if on { "security-high" } else { "security-low" }).unwrap(), 88).unwrap().to_rgba8().unwrap();
+            let opaque: Vec<_> = pixels.as_bytes().chunks_exact(4).filter(|p| p[3] > 200).collect();
+            let colored = opaque.iter().filter(|p| if on { p[1] as u16 > p[0] as u16 * 3 / 2 && p[1] > p[2] } else { p[0] as u16 > p[1] as u16 * 3 / 2 && p[0] > p[2] }).count();
+            assert!(colored * 2 > opaque.len(), "the shield itself must be colored, not just a small badge");
         }
         assert!(button_icon("light", true, 44).unwrap().tint);
     }

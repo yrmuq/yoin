@@ -12,6 +12,7 @@ pub const MAX_BUTTONS: usize = 10;
 pub const DEFAULT_SETTINGS_WIDTH: u32 = 600;
 pub const DEFAULT_SETTINGS_HEIGHT: u32 = 630;
 pub const DEFAULT_LOGO_SIZE: u32 = 100;
+pub const DEFAULT_BUTTON_ICON_SCALE: u32 = 100;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +33,7 @@ pub struct Config {
     pub theme: String,
     pub layout: String,
     pub button_size: u32,
+    pub button_icon_scale: u32,
     pub notices_hidden: bool,
     pub notice_limit: u32,
     #[serde(skip_serializing_if = "is_default_settings_width")]
@@ -62,6 +64,7 @@ impl Default for Config {
             theme: "system".into(),
             layout: "list".into(),
             button_size: 40,
+            button_icon_scale: DEFAULT_BUTTON_ICON_SCALE,
             notices_hidden: false,
             notice_limit: 3,
             settings_width: DEFAULT_SETTINGS_WIDTH,
@@ -119,6 +122,7 @@ pub fn normalize(mut cfg: Config) -> Config {
         cfg.layout = "list".into();
     }
     cfg.button_size = cfg.button_size.clamp(32, 80);
+    cfg.button_icon_scale = cfg.button_icon_scale.clamp(50, 200);
     cfg.notice_limit = cfg.notice_limit.min(11);
     cfg.settings_width = cfg.settings_width.clamp(360, 2200);
     cfg.settings_height = cfg.settings_height.clamp(240, 1800);
@@ -135,6 +139,16 @@ pub fn normalize(mut cfg: Config) -> Config {
     }
     cfg.language = cfg.language.trim().to_string();
     cfg
+}
+
+pub fn button_icon_edge(cfg: &Config) -> f32 {
+    let button = cfg.button_size as f32;
+    let (base, limit) = if cfg.layout == "tiles" {
+        ((button * 2.05 * 0.32).max(16.0), button * 2.05 * 0.5)
+    } else {
+        (20.0_f32.min(button * 0.46), button - 12.0)
+    };
+    (base * cfg.button_icon_scale as f32 / 100.0).clamp(8.0, limit.max(8.0))
 }
 
 fn is_default_settings_width(value: &u32) -> bool {
@@ -274,6 +288,7 @@ mod tests {
         assert!(!cfg.autostart);
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 40);
+        assert_eq!(cfg.button_icon_scale, 100);
         assert!(!cfg.notices_hidden);
         assert_eq!(cfg.notice_limit, 3);
         assert_eq!(cfg.labels, vec![String::new()]);
@@ -323,6 +338,23 @@ mod tests {
         assert_eq!((restored.settings_width, restored.settings_height), (800, 700));
         assert!(!restored.lock_window_size);
         assert!(!restored.auto_check_updates);
+    }
+
+    #[test]
+    fn icon_scale_persists_and_fits_both_button_layouts() {
+        let mut cfg = normalize(serde_json::from_str(r#"{"button_icon_scale":150}"#).unwrap());
+        assert!((button_icon_edge(&cfg) - 27.6).abs() < 0.01);
+        cfg.layout = "tiles".into();
+        assert!((button_icon_edge(&cfg) - 39.36).abs() < 0.01);
+        let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+        assert_eq!(restored.button_icon_scale, 150);
+        cfg.button_icon_scale = 999;
+        cfg.button_size = 32;
+        cfg = normalize(cfg);
+        assert_eq!(cfg.button_icon_scale, 200);
+        assert!(button_icon_edge(&cfg) <= 32.8);
+        cfg.layout = "list".into();
+        assert!(button_icon_edge(&cfg) <= 20.0);
     }
 
     #[test]

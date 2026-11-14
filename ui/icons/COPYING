@@ -17,8 +17,8 @@ icons/actions/22/flashlight-on.svg
 icons/actions/22/reverse.svg
 icons/actions/22/object-locked.svg
 icons/actions/22/object-unlocked.svg
-icons/status/22/security-low.svg
-icons/status/22/security-high.svg
+icons/status/64/security-low.svg
+icons/status/64/security-high.svg
 icons/status/22/temperature-cold.svg
 icons/status/22/temperature-warm.svg
 icons/actions/22/window-shade.svg

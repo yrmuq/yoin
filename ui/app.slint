@@ -232,7 +232,7 @@ component PopupButton inherits Rectangle {
     property <bool> hovered: touch.has-hover;
     border-color: on || hovered ? Breeze.outline : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
-    property <length> icon-side: Math.min(20px, root.button-height * 0.46);
+    in property <length> icon-side: Math.min(20px, root.button-height * 0.46);
     HorizontalLayout {
         padding-left: 8px;
         padding-right: 8px;
@@ -289,7 +289,7 @@ component TileButton inherits Rectangle {
     property <bool> hovered: touch.has-hover;
     border-color: on || hovered ? Breeze.outline : Breeze.frame;
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
-    property <length> icon-side: Math.max(16px, root.side * 0.32);
+    in property <length> icon-side: Math.max(16px, root.side * 0.32);
     Rectangle {
         x: (parent.width - root.icon-side) / 2;
         y: (parent.height - root.icon-side) / 2;
@@ -337,6 +337,7 @@ export component Popup inherits Window {
     in-out property <bool> tiles: false;
     in-out property <bool> pinned: false;
     in-out property <length> button-size: 40px;
+    in-out property <length> icon-size: root.tiles ? Math.max(16px, root.tile * 0.32) : Math.min(20px, root.button-size * 0.46);
     in-out property <length> slide: 0px;
     in-out property <string> ui-font-family: "Noto Sans";
     in-out property <length> ui-font-size: 13.333px;
@@ -434,6 +435,7 @@ export component Popup inherits Window {
                     has-icon: face.has-icon;
                     tint: face.tint;
                     button-height: root.button-size;
+                    icon-side: root.icon-size;
                     clicked => { root.pressed(i); }
                 }
             }
@@ -450,6 +452,7 @@ export component Popup inherits Window {
                     has-icon: face.has-icon;
                     tint: face.tint;
                     side: root.tile;
+                    icon-side: root.icon-size;
                     clicked => { root.pressed(i); }
                 }
             }
@@ -796,6 +799,9 @@ export component Settings inherits Window {
     in-out property <int> settings-width: 600;
     in-out property <int> settings-height: 630;
     in-out property <int> logo-size: 100;
+    in-out property <int> button-icon-scale: 100;
+    in-out property <string> t-button-icon-scale;
+    in-out property <string> t-button-icon-hint;
     in-out property <bool> lock-window-size: true;
     callback lock-window-size-changed(bool);
     in-out property <int> page: 0;
@@ -1213,6 +1219,13 @@ export component Settings inherits Window {
                         value <=> root.logo-size;
                         edited => { root.metrics-changed(); }
                     }
+                    Label { text: root.t-button-icon-scale; }
+                    SpinBox {
+                        minimum: 50; maximum: 200;
+                        value <=> root.button-icon-scale;
+                        edited => { root.metrics-changed(); }
+                    }
+                    Hint { text: root.t-button-icon-hint; }
                     CheckBox {
                         text: root.t-auto-check-updates;
                         checked <=> root.auto-check-updates;

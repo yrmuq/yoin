@@ -55,6 +55,19 @@ pub fn new_panel<T: ComponentHandle>(class: &'static str, create: impl FnOnce() 
     Ok(component)
 }
 
+pub async fn create<T: ComponentHandle>(class: &'static str, create: impl FnOnce() -> Option<T>) -> Option<T> {
+    let creation = CREATION.with(Rc::clone);
+    let _creation = creation.lock().await;
+    // Adapters are registered for native creation before show() is polled.
+    let _ = slint::set_xdg_app_id(class);
+    let _class = ClassGuard;
+    let component = create()?;
+    if let Err(error) = component.window().winit_window().await {
+        eprintln!("yoin: window: {error}");
+    }
+    Some(component)
+}
+
 #[derive(Clone, Default)]
 pub struct Visibility {
     pending: Rc<RefCell<Option<(AbortHandle, Rc<Cell<bool>>)>>>,
@@ -177,6 +190,12 @@ mod tests {
         assert!(settings.decorations);
         assert!(settings.resizable);
         assert_eq!(settings.title, "yoin");
+    }
+
+    #[tokio::test]
+    async fn cached_window_does_not_wait_for_native_recreation() {
+        let existing = create::<crate::Settings>("yoin", || None).await;
+        assert!(existing.is_none());
     }
 
     #[tokio::test]
