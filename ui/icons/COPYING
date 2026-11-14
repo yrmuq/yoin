@@ -10,3 +10,31 @@ Source: https://invent.kde.org/frameworks/breeze-icons
 icons/actions/22/open-link.svg
 icons/actions/22/configure.svg
 icons/actions/22/window-pin.svg
+
+Additional bundled Home Assistant icons (same Breeze license):
+icons/actions/22/flashlight-off.svg
+icons/actions/22/flashlight-on.svg
+icons/actions/22/reverse.svg
+icons/actions/22/object-locked.svg
+icons/actions/22/object-unlocked.svg
+icons/status/22/security-low.svg
+icons/status/22/security-high.svg
+icons/status/22/temperature-cold.svg
+icons/status/22/temperature-warm.svg
+icons/actions/22/window-shade.svg
+icons/actions/22/view-refresh.svg
+icons/actions/22/media-playback-start.svg
+icons/actions/22/media-playback-stop.svg
+icons/actions/22/document-edit.svg
+icons/actions/22/system-run.svg
+icons/status/22/audio-volume-muted.svg
+icons/status/22/audio-volume-high.svg
+icons/devices/22/input-keyboard.svg
+icons/devices/22/network-wired.svg
+icons/actions/22/network-connect.svg
+icons/actions/22/view-group.svg
+icons/devices/22/camera-photo.svg
+icons/actions/22/window.svg
+icons/actions/22/dialog-cancel.svg
+icons/actions/22/dialog-ok-apply.svg
+icons/actions/22/document-edit.svg (edit.svg)

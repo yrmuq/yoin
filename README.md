@@ -35,6 +35,8 @@ A native KDE tray program for Home Assistant. It keeps a websocket open, shows u
 | Left click (tray) | Open or close the button window. |
 | Right click (tray) | Settings and Quit. |
 | Button | Run the bound entity. The window stays open. An empty button opens Settings. |
+| Pencil (Buttons) | Choose the Home Assistant entity, tray label, and Breeze icon. |
+| Left-button drag (Buttons) | Reorder the cards and their corresponding tray buttons. |
 
 A notification uses the device name from Settings. `Fedora` is `notify.mobile_app_fedora`.
 

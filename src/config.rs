@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_BUTTONS: usize = 10;
-pub const DEFAULT_SETTINGS_WIDTH: u32 = 560;
-pub const DEFAULT_SETTINGS_HEIGHT: u32 = 640;
-pub const DEFAULT_LOGO_SIZE: u32 = 96;
+pub const DEFAULT_SETTINGS_WIDTH: u32 = 600;
+pub const DEFAULT_SETTINGS_HEIGHT: u32 = 630;
+pub const DEFAULT_LOGO_SIZE: u32 = 69;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +24,8 @@ pub struct Config {
     pub webhook_id: String,
     pub buttons: Vec<String>,
     pub labels: Vec<String>,
+    pub icons: Vec<String>,
+    pub lock_window_size: bool,
     pub autostart: bool,
     pub language: String,
     pub theme: String,
@@ -31,11 +33,11 @@ pub struct Config {
     pub button_size: u32,
     pub notices_hidden: bool,
     pub notice_limit: u32,
-    #[serde(default, skip_serializing_if = "is_default_settings_width")]
+    #[serde(skip_serializing_if = "is_default_settings_width")]
     pub settings_width: u32,
-    #[serde(default, skip_serializing_if = "is_default_settings_height")]
+    #[serde(skip_serializing_if = "is_default_settings_height")]
     pub settings_height: u32,
-    #[serde(default, skip_serializing_if = "is_default_logo_size")]
+    #[serde(skip_serializing_if = "is_default_logo_size")]
     pub logo_size: u32,
     #[serde(default, skip_serializing_if = "is_false")]
     pub dev_tab: bool,
@@ -51,6 +53,8 @@ impl Default for Config {
             webhook_id: String::new(),
             buttons: vec![String::new()],
             labels: vec![String::new()],
+            icons: vec![String::new()],
+            lock_window_size: true,
             autostart: false,
             language: String::new(),
             theme: "system".into(),
@@ -114,11 +118,15 @@ pub fn normalize(mut cfg: Config) -> Config {
     }
     cfg.button_size = cfg.button_size.clamp(32, 80);
     cfg.notice_limit = cfg.notice_limit.min(11);
-    cfg.settings_width = cfg.settings_width.clamp(360, 1100);
-    cfg.settings_height = cfg.settings_height.clamp(240, 900);
+    cfg.settings_width = cfg.settings_width.clamp(360, 2200);
+    cfg.settings_height = cfg.settings_height.clamp(240, 1800);
     cfg.logo_size = cfg.logo_size.clamp(32, 256);
-    cfg.labels.truncate(MAX_BUTTONS);
-    cfg.labels.resize(cfg.buttons.len(), String::new());
+    align_buttons(&mut cfg);
+    for icon in &mut cfg.icons {
+        if !crate::icons::BUTTON_ICONS.iter().any(|(kind, _)| *kind == icon.as_str()) {
+            icon.clear();
+        }
+    }
     for label in &mut cfg.labels {
         let trimmed = label.trim();
         *label = trimmed.chars().take(80).collect();
@@ -143,9 +151,33 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 
-pub fn align_labels(cfg: &mut Config) {
+pub fn align_buttons(cfg: &mut Config) {
     cfg.labels.resize(cfg.buttons.len(), String::new());
     cfg.labels.truncate(cfg.buttons.len());
+    cfg.icons.resize(cfg.buttons.len(), String::new());
+    cfg.icons.truncate(cfg.buttons.len());
+}
+
+pub fn move_button(cfg: &mut Config, from: usize, to: usize) -> bool {
+    if from >= cfg.buttons.len() || to >= cfg.buttons.len() || from == to {
+        return false;
+    }
+    align_buttons(cfg);
+    let entity = cfg.buttons.remove(from);
+    let label = cfg.labels.remove(from);
+    let icon = cfg.icons.remove(from);
+    cfg.buttons.insert(to, entity);
+    cfg.labels.insert(to, label);
+    cfg.icons.insert(to, icon);
+    true
+}
+
+pub fn record_window_size(cfg: &mut Config, width: u32, height: u32) -> bool {
+    if cfg.lock_window_size { return false; }
+    let size = (width.clamp(360, 2200), height.clamp(240, 1800));
+    if (cfg.settings_width, cfg.settings_height) == size { return false; }
+    (cfg.settings_width, cfg.settings_height) = size;
+    true
 }
 
 pub fn load_config(path: &Path) -> Config {
@@ -243,6 +275,9 @@ mod tests {
         assert!(!cfg.notices_hidden);
         assert_eq!(cfg.notice_limit, 3);
         assert_eq!(cfg.labels, vec![String::new()]);
+        assert_eq!((cfg.settings_width, cfg.settings_height, cfg.logo_size), (600, 630, 69));
+        assert!(cfg.lock_window_size);
+        assert_eq!(cfg.icons, vec![String::new()]);
     }
 
     #[test]
@@ -255,6 +290,34 @@ mod tests {
         assert_eq!(cfg.labels, vec!["Lamp".to_string(), String::new()]);
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 80);
+    }
+
+    #[test]
+    fn drag_moves_the_entity_label_and_icon_together() {
+        let mut cfg = normalize(serde_json::from_str(r#"{"buttons":["light.a","switch.b","script.c"],"labels":["Lamp","Plug","Away"],"icons":["light","valve","automation"]}"#).unwrap());
+        assert!(move_button(&mut cfg, 0, 2));
+        assert_eq!(cfg.buttons, ["switch.b", "script.c", "light.a"]);
+        assert_eq!(cfg.labels, ["Plug", "Away", "Lamp"]);
+        assert_eq!(cfg.icons, ["valve", "automation", "light"]);
+        assert!(move_button(&mut cfg, 2, 0));
+        assert_eq!(cfg.labels, ["Lamp", "Plug", "Away"]);
+        assert!(!move_button(&mut cfg, usize::MAX, 0));
+        assert!(!move_button(&mut cfg, 0, 3));
+        let restored = normalize(serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap());
+        assert_eq!(restored, cfg);
+    }
+
+    #[test]
+    fn icon_choices_and_window_lock_survive_config_updates() {
+        let mut cfg = normalize(serde_json::from_str(r#"{"buttons":["light.a","switch.b"],"icons":["../../other.svg","fan","unused"]}"#).unwrap());
+        assert_eq!(cfg.icons, ["", "fan"]);
+        assert!(!record_window_size(&mut cfg, 800, 700));
+        cfg.lock_window_size = false;
+        assert!(record_window_size(&mut cfg, 800, 700));
+        assert!(!record_window_size(&mut cfg, 800, 700));
+        let restored = normalize(serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap());
+        assert_eq!((restored.settings_width, restored.settings_height), (800, 700));
+        assert!(!restored.lock_window_size);
     }
 
     #[test]
@@ -285,7 +348,7 @@ mod tests {
         .unwrap();
         let cfg = normalize(cfg);
         assert_eq!(cfg.settings_width, 360);
-        assert_eq!(cfg.settings_height, 900);
+        assert_eq!(cfg.settings_height, 1800);
         assert_eq!(cfg.logo_size, 32);
     }
 }

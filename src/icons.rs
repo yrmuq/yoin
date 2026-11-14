@@ -67,18 +67,53 @@ pub struct ThemeIcon {
     pub tint: bool,
 }
 
+pub const BUTTON_ICONS: &[(&str, u32)] = &[
+    ("", 80), ("light", 81), ("switch", 82), ("lock", 83),
+    ("alarm_control_panel", 84), ("climate", 85), ("cover", 86), ("fan", 87),
+    ("media_player", 88), ("script", 89), ("automation", 90), ("siren", 91),
+    ("remote", 92), ("valve", 93), ("group", 94), ("camera", 95), ("door", 96),
+];
+
+fn bundled(name: &str) -> Option<&'static [u8]> {
+    Some(match name {
+        "flashlight-off" => include_bytes!("../ui/icons/flashlight-off.svg"),
+        "flashlight-on" => include_bytes!("../ui/icons/flashlight-on.svg"),
+        "reverse" => include_bytes!("../ui/icons/reverse.svg"),
+        "object-locked" => include_bytes!("../ui/icons/object-locked.svg"),
+        "object-unlocked" => include_bytes!("../ui/icons/object-unlocked.svg"),
+        "security-low" => include_bytes!("../ui/icons/security-low.svg"),
+        "security-high" => include_bytes!("../ui/icons/security-high.svg"),
+        "temperature-cold" => include_bytes!("../ui/icons/temperature-cold.svg"),
+        "temperature-warm" => include_bytes!("../ui/icons/temperature-warm.svg"),
+        "window-shade" => include_bytes!("../ui/icons/window-shade.svg"),
+        "view-refresh" => include_bytes!("../ui/icons/view-refresh.svg"),
+        "media-playback-start" => include_bytes!("../ui/icons/media-playback-start.svg"),
+        "media-playback-stop" => include_bytes!("../ui/icons/media-playback-stop.svg"),
+        "document-edit" => include_bytes!("../ui/icons/document-edit.svg"),
+        "system-run" => include_bytes!("../ui/icons/system-run.svg"),
+        "audio-volume-muted" => include_bytes!("../ui/icons/audio-volume-muted.svg"),
+        "audio-volume-high" => include_bytes!("../ui/icons/audio-volume-high.svg"),
+        "input-keyboard" => include_bytes!("../ui/icons/input-keyboard.svg"),
+        "network-wired" => include_bytes!("../ui/icons/network-wired.svg"),
+        "network-connect" => include_bytes!("../ui/icons/network-connect.svg"),
+        "view-group" => include_bytes!("../ui/icons/view-group.svg"),
+        "camera-photo" => include_bytes!("../ui/icons/camera-photo.svg"),
+        "window" => include_bytes!("../ui/icons/window.svg"),
+        "dialog-cancel" => include_bytes!("../ui/icons/dialog-cancel.svg"),
+        "dialog-ok-apply" => include_bytes!("../ui/icons/dialog-ok-apply.svg"),
+        _ => return None,
+    })
+}
+
 pub fn button_icon(kind: &str, on: bool, edge: u32) -> Option<ThemeIcon> {
     for name in icon_candidates(kind, on) {
-        if *name == "reverse" {
-            if let Some(mut icon) = raster_theme_icon(name, edge) {
-                icon.image = turn_on_side(icon.image);
-                return Some(icon);
-            }
-            continue;
-        }
-        if let Some(icon) = theme_icon(name) {
-            return Some(icon);
-        }
+        let Some(bytes) = bundled(name) else { continue };
+        let image = if *name == "reverse" {
+            turn_on_side(svg_image(bytes, edge)?)
+        } else {
+            slint::Image::load_from_svg_data(bytes).ok()?
+        };
+        return Some(ThemeIcon { image, tint: true });
     }
     None
 }
@@ -88,14 +123,15 @@ fn icon_candidates(kind: &str, on: bool) -> &'static [&'static str] {
         ("light", false) => &["flashlight-off", "brightness-low"],
         ("light", true) => &["flashlight-on", "brightness-high"],
         ("switch" | "input_boolean", _) => &["reverse"],
-        ("lock", false) => &["object-locked", "system-lock-screen"],
-        ("lock", true) => &["object-unlocked", "unlock"],
+        ("lock", false) => &["object-unlocked", "unlock"],
+        ("lock", true) => &["object-locked", "system-lock-screen"],
         ("alarm_control_panel", false) => &["security-low"],
         ("alarm_control_panel", true) => &["security-high"],
         ("climate" | "water_heater" | "humidifier", false) => &["temperature-cold"],
         ("climate" | "water_heater" | "humidifier", true) => &["temperature-warm"],
+        ("door", _) => &["window"],
         ("cover", _) => &["window-shade"],
-        ("fan", _) => &["weather-wind", "draw-arrow-down"],
+        ("fan", _) => &["view-refresh"],
         ("media_player", false) => &["media-playback-stop"],
         ("media_player", true) => &["media-playback-start"],
         ("script", _) => &["document-edit"],
@@ -117,18 +153,6 @@ pub fn theme_icon(name: &str) -> Option<ThemeIcon> {
     let path = locate_icon(name)?;
     let tint = should_tint(&path);
     let image = load_slint_image(&path)?;
-    Some(ThemeIcon { image, tint })
-}
-
-fn raster_theme_icon(name: &str, edge: u32) -> Option<ThemeIcon> {
-    let path = locate_icon(name)?;
-    let tint = should_tint(&path);
-    let bytes = std::fs::read(&path).ok()?;
-    let image = if bytes.windows(4).any(|mark| mark == *b"<svg") || bytes.starts_with(b"<?xml") {
-        svg_image(&bytes, edge)?
-    } else {
-        load_slint_image(&path)?
-    };
     Some(ThemeIcon { image, tint })
 }
 
@@ -156,7 +180,7 @@ pub fn describe_icon(name: &str) -> String {
 }
 
 pub fn chosen_icon_name(kind: &str, on: bool) -> Option<&'static str> {
-    icon_candidates(kind, on).iter().copied().find(|name| locate_icon(name).is_some())
+    icon_candidates(kind, on).iter().copied().find(|name| bundled(name).is_some())
 }
 
 fn icon_theme_name() -> String {
@@ -387,6 +411,18 @@ fn svg_image(bytes: &[u8], edge: u32) -> Option<slint::Image> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_home_assistant_choices_render_without_a_system_theme() {
+        for (kind, _) in BUTTON_ICONS {
+            for on in [false, true] {
+                let icon = button_icon(kind, on, 44).unwrap_or_else(|| panic!("missing {kind}: {on}"));
+                assert!(icon.image.size().width > 0);
+            }
+        }
+        assert_eq!(chosen_icon_name("lock", true), Some("object-locked"));
+        assert_eq!(chosen_icon_name("lock", false), Some("object-unlocked"));
+    }
 
     #[test]
     fn breeze_pin_is_one_color_and_rasterizes() {

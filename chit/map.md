@@ -8,14 +8,14 @@ Read only the row the task needs.
 - `src/tray.rs` — the StatusNotifier icon. Left click toggles the window.
 - `src/client.rs` — the Home Assistant websocket: register, call a service, follow state.
 - `src/ha.rs` — service URLs and which domains toggle.
-- `src/config.rs` — `~/.config/yoin/config.json`.
+- `src/config.rs` — configuration, aligned button labels/icons, drag ordering, and locked or remembered settings dimensions.
 - `src/notices.rs` — the newest notices. The count is a setting, from 0 to 11.
 - `src/notify.rs` — a desktop notification on the session bus.
 - `src/place.rs` — where the window opens, and the KWin rule in `kwin/placer.js`.
 - `src/theme.rs` — the KDE color scheme and the font.
-- `src/icons.rs` — Breeze icons, including the sideways arrow.
+- `src/icons.rs`, `ui/icons/` — bundled Breeze choices for Home Assistant buttons and system-theme header icons; only the sideways switch is rasterized.
 - `src/i18n.rs` — `languages/*.ini`. A line is `id = English original = text shown`.
-- `ui/app.slint` — the button window, the notices, and settings.
+- `ui/app.slint` — tray windows and settings, button tabs, draggable cards, the child button editor, About, and Dev size controls.
 - `languages/` — `English.ini` and `Russian.ini`.
 
 ## Packaging
