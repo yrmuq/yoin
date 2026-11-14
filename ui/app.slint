@@ -281,6 +281,8 @@ component TileButton inherits Rectangle {
     in property <bool> has-icon: false;
     in property <bool> tint: false;
     in property <length> side: 84px;
+    in property <int> content-offset: 0;
+    clip: true;
     callback clicked;
     width: side;
     height: side;
@@ -291,36 +293,42 @@ component TileButton inherits Rectangle {
     background: on ? Breeze.selection : (hovered ? Breeze.button-hover : Breeze.button);
     in property <length> icon-side: Math.max(16px, root.side * 0.32);
     Rectangle {
-        x: (parent.width - root.icon-side) / 2;
-        y: (parent.height - root.icon-side) / 2;
-        width: root.icon-side;
-        height: root.icon-side;
+        y: root.content-offset * 1px;
+        width: parent.width;
+        height: parent.height;
         background: transparent;
-        if root.has-icon: BreezeIcon {
-            source: root.icon;
-            tint: root.tint;
-            ink: root.on ? Breeze.selection-fg : Breeze.fg;
-            width: parent.width;
-            height: parent.height;
+        Rectangle {
+            x: (parent.width - root.icon-side) / 2;
+            y: (parent.height - root.icon-side) / 2;
+            width: root.icon-side;
+            height: root.icon-side;
+            background: transparent;
+            if root.has-icon: BreezeIcon {
+                source: root.icon;
+                tint: root.tint;
+                ink: root.on ? Breeze.selection-fg : Breeze.fg;
+                width: parent.width;
+                height: parent.height;
+            }
+            if !root.has-icon: KindIcon {
+                kind: root.kind;
+                ink: root.on ? Breeze.selection-fg : Breeze.fg;
+                width: parent.width;
+                height: parent.height;
+            }
         }
-        if !root.has-icon: KindIcon {
-            kind: root.kind;
-            ink: root.on ? Breeze.selection-fg : Breeze.fg;
-            width: parent.width;
-            height: parent.height;
+        caption := Label {
+            x: 6px;
+            y: (parent.height + root.icon-side) / 2 + 4px;
+            text: root.label;
+            color: root.on ? Breeze.selection-fg : Breeze.fg;
+            wrap: word-wrap;
+            overflow: elide;
+            width: parent.width - 12px;
+            horizontal-alignment: center;
+            font-size: Math.max(9px, root.side * 0.15);
+            height: Math.max(0px, Math.min(root.side * 0.34, parent.height - caption.y));
         }
-    }
-    caption := Label {
-        x: 6px;
-        y: (parent.height + root.icon-side) / 2 + 4px;
-        text: root.label;
-        color: root.on ? Breeze.selection-fg : Breeze.fg;
-        wrap: word-wrap;
-        overflow: elide;
-        width: parent.width - 12px;
-        horizontal-alignment: center;
-        font-size: Math.max(9px, root.side * 0.15);
-        height: Math.max(0px, Math.min(root.side * 0.34, parent.height - caption.y));
     }
     touch := TouchArea {
         mouse-cursor: pointer;
@@ -337,7 +345,8 @@ export component Popup inherits Window {
     in-out property <bool> tiles: false;
     in-out property <bool> pinned: false;
     in-out property <length> button-size: 40px;
-    in-out property <length> icon-size: root.tiles ? Math.max(16px, root.tile * 0.32) : Math.min(20px, root.button-size * 0.46);
+    in-out property <length> icon-size: root.tiles ? Math.min(root.tile * 0.5, Math.max(16px, root.tile * 0.32) * 1.4) : Math.min(root.button-size - 12px, Math.min(20px, root.button-size * 0.46) * 1.4);
+    in-out property <int> tile-content-offset: 0;
     in-out property <length> slide: 0px;
     in-out property <string> ui-font-family: "Noto Sans";
     in-out property <length> ui-font-size: 13.333px;
@@ -452,6 +461,7 @@ export component Popup inherits Window {
                     has-icon: face.has-icon;
                     tint: face.tint;
                     side: root.tile;
+                    content-offset: root.tile-content-offset;
                     icon-side: root.icon-size;
                     clicked => { root.pressed(i); }
                 }
@@ -799,7 +809,10 @@ export component Settings inherits Window {
     in-out property <int> settings-width: 600;
     in-out property <int> settings-height: 630;
     in-out property <int> logo-size: 100;
-    in-out property <int> button-icon-scale: 100;
+    in-out property <int> button-icon-scale: 140;
+    in-out property <int> tile-content-offset: 0;
+    in-out property <string> t-tile-content-offset;
+    in-out property <string> t-tile-content-hint;
     in-out property <string> t-button-icon-scale;
     in-out property <string> t-button-icon-hint;
     in-out property <bool> lock-window-size: true;
@@ -1226,6 +1239,13 @@ export component Settings inherits Window {
                         edited => { root.metrics-changed(); }
                     }
                     Hint { text: root.t-button-icon-hint; }
+                    Label { text: root.t-tile-content-offset; }
+                    SpinBox {
+                        minimum: -100; maximum: 100;
+                        value <=> root.tile-content-offset;
+                        edited => { root.metrics-changed(); }
+                    }
+                    Hint { text: root.t-tile-content-hint; }
                     CheckBox {
                         text: root.t-auto-check-updates;
                         checked <=> root.auto-check-updates;

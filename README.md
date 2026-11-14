@@ -37,7 +37,8 @@ A native KDE tray program for Home Assistant. It keeps a websocket open, shows u
 | Button | Run the bound entity. The window stays open. An empty button opens Settings. |
 | Pencil (Devices) | Choose the Home Assistant entity, tray label, and Breeze icon. |
 | Left-button drag (Devices) | Reorder the cards and their corresponding tray buttons. |
-| Button icon size (Dev) | Scale the entity icons in the tray; 100% is the default. |
+| Button icon size (Dev) | Scale the entity icons in the tray; 140% is the default. |
+| Tile content vertical offset (Dev) | Move the tile icon and label together: negative values move them up, positive values move them down. |
 
 The Dev option “Automatically check for updates when opening About” is enabled by default. Disable it to use “Check for updates” in About instead. “Start with KDE” in General takes effect immediately.
 

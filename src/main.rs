@@ -744,6 +744,7 @@ fn apply_metrics(settings: &Settings, cfg: &Config) {
     settings.set_settings_height(cfg.settings_height as i32);
     settings.set_logo_size(cfg.logo_size as i32);
     settings.set_button_icon_scale(cfg.button_icon_scale as i32);
+    settings.set_tile_content_offset(cfg.tile_content_offset);
     settings.set_lock_window_size(cfg.lock_window_size);
     settings.set_dev_open(cfg.dev_tab);
     let _ = settings.window().with_winit_window(|window| {
@@ -919,6 +920,7 @@ fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f
     popup.set_tiles(tiles);
     popup.set_button_size(button_size);
     popup.set_icon_size(config::button_icon_edge(&app.borrow().cfg));
+    popup.set_tile_content_offset(app.borrow().cfg.tile_content_offset);
     popup.set_pinned(pinned);
     popup.set_notices_hidden(notices_hidden);
     popup.set_notice_limit(notice_limit);
@@ -1435,6 +1437,8 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_icon_sources(cat.tr(103).into());
     settings.set_t_button_icon_scale(cat.tr(104).into());
     settings.set_t_button_icon_hint(cat.tr(105).into());
+    settings.set_t_tile_content_offset(cat.tr(106).into());
+    settings.set_t_tile_content_hint(cat.tr(107).into());
     settings.set_t_connection(cat.tr(10).into());
     settings.set_t_devices(cat.tr(11).into());
     settings.set_t_general(cat.tr(18).into());
@@ -1867,9 +1871,10 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         let height = settings.get_settings_height().clamp(240, 1800) as u32;
         let logo = settings.get_logo_size().clamp(32, 256) as u32;
         let icon_scale = settings.get_button_icon_scale().clamp(50, 200) as u32;
+        let tile_offset = settings.get_tile_content_offset().clamp(-100, 100);
         let changed = {
             let cfg = &ctx_metrics.app.borrow().cfg;
-            cfg.settings_width != width || cfg.settings_height != height || cfg.logo_size != logo || cfg.button_icon_scale != icon_scale
+            cfg.settings_width != width || cfg.settings_height != height || cfg.logo_size != logo || cfg.button_icon_scale != icon_scale || cfg.tile_content_offset != tile_offset
         };
         if !changed {
             return;
@@ -1880,6 +1885,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_height = height;
             app.cfg.logo_size = logo;
             app.cfg.button_icon_scale = icon_scale;
+            app.cfg.tile_content_offset = tile_offset;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
         apply_metrics(&settings, &ctx_metrics.app.borrow().cfg);
@@ -1908,6 +1914,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
             app.cfg.button_icon_scale = config::DEFAULT_BUTTON_ICON_SCALE;
+            app.cfg.tile_content_offset = config::DEFAULT_TILE_CONTENT_OFFSET;
             app.cfg.lock_window_size = true;
             app.cfg.dev_tab = false;
             let dropped = notices::trim(&mut app.notes, 3);
@@ -1941,6 +1948,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
             app.cfg.button_icon_scale = config::DEFAULT_BUTTON_ICON_SCALE;
+            app.cfg.tile_content_offset = config::DEFAULT_TILE_CONTENT_OFFSET;
             app.cfg.lock_window_size = true;
             app.cfg.auto_check_updates = true;
             let _ = config::save_config(&app.cfg, &config::config_path());

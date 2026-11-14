@@ -12,7 +12,8 @@ pub const MAX_BUTTONS: usize = 10;
 pub const DEFAULT_SETTINGS_WIDTH: u32 = 600;
 pub const DEFAULT_SETTINGS_HEIGHT: u32 = 630;
 pub const DEFAULT_LOGO_SIZE: u32 = 100;
-pub const DEFAULT_BUTTON_ICON_SCALE: u32 = 100;
+pub const DEFAULT_BUTTON_ICON_SCALE: u32 = 140;
+pub const DEFAULT_TILE_CONTENT_OFFSET: i32 = 0;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +35,7 @@ pub struct Config {
     pub layout: String,
     pub button_size: u32,
     pub button_icon_scale: u32,
+    pub tile_content_offset: i32,
     pub notices_hidden: bool,
     pub notice_limit: u32,
     #[serde(skip_serializing_if = "is_default_settings_width")]
@@ -65,6 +67,7 @@ impl Default for Config {
             layout: "list".into(),
             button_size: 40,
             button_icon_scale: DEFAULT_BUTTON_ICON_SCALE,
+            tile_content_offset: DEFAULT_TILE_CONTENT_OFFSET,
             notices_hidden: false,
             notice_limit: 3,
             settings_width: DEFAULT_SETTINGS_WIDTH,
@@ -123,6 +126,7 @@ pub fn normalize(mut cfg: Config) -> Config {
     }
     cfg.button_size = cfg.button_size.clamp(32, 80);
     cfg.button_icon_scale = cfg.button_icon_scale.clamp(50, 200);
+    cfg.tile_content_offset = cfg.tile_content_offset.clamp(-100, 100);
     cfg.notice_limit = cfg.notice_limit.min(11);
     cfg.settings_width = cfg.settings_width.clamp(360, 2200);
     cfg.settings_height = cfg.settings_height.clamp(240, 1800);
@@ -288,7 +292,8 @@ mod tests {
         assert!(!cfg.autostart);
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 40);
-        assert_eq!(cfg.button_icon_scale, 100);
+        assert_eq!(cfg.button_icon_scale, 140);
+        assert_eq!(cfg.tile_content_offset, 0);
         assert!(!cfg.notices_hidden);
         assert_eq!(cfg.notice_limit, 3);
         assert_eq!(cfg.labels, vec![String::new()]);
@@ -355,6 +360,17 @@ mod tests {
         assert!(button_icon_edge(&cfg) <= 32.8);
         cfg.layout = "list".into();
         assert!(button_icon_edge(&cfg) <= 20.0);
+    }
+
+    #[test]
+    fn tile_content_offset_keeps_its_direction_when_saved() {
+        for offset in [-18, 0, 14] {
+            let cfg = normalize(Config { tile_content_offset: offset, ..Default::default() });
+            let restored: Config = serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap();
+            assert_eq!(restored.tile_content_offset, offset);
+        }
+        assert_eq!(normalize(Config { tile_content_offset: -999, ..Default::default() }).tile_content_offset, -100);
+        assert_eq!(normalize(Config { tile_content_offset: 999, ..Default::default() }).tile_content_offset, 100);
     }
 
     #[test]
