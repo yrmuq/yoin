@@ -374,10 +374,10 @@ export component Popup inherits Window {
         ? (tile-rows * tile + Math.max(tile-rows - 1, 0) * gap)
         : (Math.max(root.faces.length, 1) * (root.button-size + gap) - gap);
     property <length> card-h: root.pad + 32px + 4px + root.body-h + root.pad;
-    out property <length> layout-width: root.width;
-    out property <length> layout-height: root.height;
-    width: root.tiles ? (pad * 2 + cols * tile + Math.max(cols - 1, 0) * gap) : 300px;
-    height: root.card-h;
+    out property <length> layout-width: root.tiles ? (pad * 2 + cols * tile + Math.max(cols - 1, 0) * gap) : 300px;
+    out property <length> layout-height: root.card-h;
+    width: root.layout-width;
+    height: root.layout-height;
     background: transparent;
     card := Rectangle {
         y: root.slide;
@@ -482,10 +482,10 @@ export component Notices inherits Window {
     callback open-shot(int);
     callback dismiss-note(int);
     width: pane-width;
-    height: pad * 2 + 3 * note-row + 2px;
+    height: Math.max(root.notice-h, 1px);
     background: transparent;
     Rectangle {
-        y: parent.height - root.notice-h + root.slide;
+        y: root.slide;
         width: parent.width;
         height: root.notice-h;
         visible: root.notice-h > 1px;

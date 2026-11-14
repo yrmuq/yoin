@@ -15,11 +15,11 @@ function isPopupClass(window) {
 }
 
 function isPopup(window) {
-    return textOf(window.caption) === "yoin-buttons" && !window.dialog;
+    return (resourceText(window).indexOf("yoin-popup-buttons") !== -1 || textOf(window.caption) === "yoin-buttons") && !window.dialog;
 }
 
 function isNotice(window) {
-    return textOf(window.caption) === "yoin-notices" && !window.dialog;
+    return (resourceText(window).indexOf("yoin-popup-notices") !== -1 || textOf(window.caption) === "yoin-notices") && !window.dialog;
 }
 
 function findPopup() {
@@ -70,6 +70,8 @@ function hideFromTaskbar(window) {
     window.skipTaskbar = true;
     window.skipSwitcher = true;
     window.skipPager = true;
+    window.noBorder = true;
+    window.skipsCloseAnimation = true;
 }
 
 function contains(rect, point) {
@@ -190,6 +192,7 @@ function place(entry) {
     target.x = snap(target.x, ratio);
     target.y = snap(target.y, ratio);
     if (frame.x === target.x && frame.y === target.y) {
+        repositionNotices();
         return;
     }
     entry.moving = true;
@@ -222,33 +225,7 @@ function track(window) {
             }
         });
     }
-    window.frameGeometryChanged.connect((previous) => {
-        if (entry.moving) {
-            return;
-        }
-        const current = window.frameGeometry;
-        if (previous && previous.height !== current.height && Math.abs(previous.width - current.width) < 1) {
-            const ratio = ratioOf(window);
-            const bottom = previous.y + previous.height;
-            const next = {
-                x: snap(previous.x, ratio),
-                y: snap(bottom - current.height, ratio),
-                width: current.width,
-                height: current.height,
-            };
-            if (next.x !== current.x || next.y !== current.y) {
-                entry.moving = true;
-                try {
-                    window.frameGeometry = next;
-                } finally {
-                    entry.moving = false;
-                }
-            }
-            repositionNotices();
-            return;
-        }
-        place(entry);
-    });
+    window.frameGeometryChanged.connect(() => place(entry));
     window.closed.connect(() => windows.delete(window));
     onShow();
 }

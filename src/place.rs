@@ -80,9 +80,11 @@ skippager=true
 skippagerrule=2
 skipswitcher=true
 skipswitcherrule=2
-wmclass=yoin-popup
-wmclassmatch=1
+wmclass=^yoin-popup(-buttons|-notices)?$
+wmclassmatch=3
 wmclasscomplete=false
+noborder=true
+noborderrule=2
 ";
 
 /// KWin applies window rules while the window is created, before the task
@@ -196,9 +198,11 @@ fn tray_rule_current(text: &str) -> bool {
     let after = &text[start + "[yoin-tray]".len()..];
     let end = after.find("\n[").unwrap_or(after.len());
     let section = &after[..end];
-    section.contains("wmclass=yoin-popup\n")
-        && section.contains("wmclassmatch=1\n")
+    section.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n")
+        && section.contains("wmclassmatch=3\n")
         && section.contains("skiptaskbarrule=2\n")
+        && section.contains("noborder=true\n")
+        && section.contains("noborderrule=2\n")
         && !section.contains("title=")
 }
 
@@ -212,21 +216,28 @@ mod tests {
         assert!(first.contains("rules=1,yoin-tray\n"));
         assert!(first.contains("count=2\n"));
         assert!(first.contains("skiptaskbar=true\n"));
-        assert!(first.contains("wmclass=yoin-popup\n"));
-        assert!(first.contains("wmclassmatch=1\n"));
+        assert!(first.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
+        assert!(first.contains("wmclassmatch=3\n"));
         assert!(!first.contains("title="));
+        assert!(first.contains("noborder=true\n"));
+        assert!(first.contains("noborderrule=2\n"));
         assert!(merge_kwin_rules(&first).is_none());
         let stale = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin\nskiptaskbar=true\n";
         let updated = merge_kwin_rules(stale).unwrap();
-        assert!(updated.contains("wmclass=yoin-popup\n"));
+        assert!(updated.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
         assert!(!updated.contains("title="));
         assert!(!updated.contains("Description=yoin tray windows\n"));
         assert!(merge_kwin_rules(&updated).is_none());
         let old = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nDescription=yoin tray popup\ntitle=yoin-(buttons|notices)\ntitlematch=3\nwmclass=yoin\nwmclassmatch=1\n";
         let fixed = merge_kwin_rules(old).unwrap();
-        assert!(fixed.contains("wmclass=yoin-popup\n"));
+        assert!(fixed.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
         assert!(!fixed.contains("title="));
         assert!(merge_kwin_rules(&fixed).is_none());
+        let previous = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin-popup\nwmclassmatch=1\nskiptaskbarrule=2\n";
+        let updated = merge_kwin_rules(previous).unwrap();
+        assert!(updated.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
+        assert!(updated.contains("noborderrule=2\n"));
+        assert!(merge_kwin_rules(&updated).is_none());
         let empty = merge_kwin_rules("").unwrap();
         assert!(empty.contains("[yoin-tray]\n"));
         assert!(empty.contains("rules=yoin-tray\n"));
