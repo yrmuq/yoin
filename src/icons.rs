@@ -113,7 +113,7 @@ pub fn button_icon(kind: &str, on: bool, edge: u32) -> Option<ThemeIcon> {
         } else {
             slint::Image::load_from_svg_data(bytes).ok()?
         };
-        return Some(ThemeIcon { image, tint: true });
+        return Some(ThemeIcon { image, tint: should_tint_bytes(bytes) });
     }
     None
 }
@@ -318,10 +318,20 @@ fn ini_value(path: &Path, section_name: &str, key_name: &str) -> Option<String> 
 
 fn should_tint(path: &Path) -> bool {
     let Ok(bytes) = std::fs::read(path) else { return false };
+    should_tint_bytes(&bytes)
+}
+
+fn should_tint_bytes(bytes: &[u8]) -> bool {
     if bytes.starts_with(b"\x89PNG") {
         return false;
     }
-    let text = String::from_utf8_lossy(&bytes).to_ascii_lowercase();
+    let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
+    // Breeze status badges carry meaning in their positive/negative/warning colors.
+    if ["colorscheme-positivetext", "colorscheme-negativetext", "colorscheme-neutraltext"]
+        .iter().any(|role| text.contains(role))
+    {
+        return false;
+    }
     if text.contains("currentcolor") || text.contains("colorscheme-") {
         return true;
     }
@@ -433,6 +443,17 @@ mod tests {
         std::fs::write(&file, "<svg><path fill=\"#ff0000\"/><path fill=\"#00ff00\"/></svg>").unwrap();
         assert!(!should_tint(&file));
         let _ = std::fs::remove_file(file);
+    }
+
+    #[test]
+    fn alarm_badges_keep_their_breeze_status_colors() {
+        for (on, name, rgb) in [(true, "security-high", [39, 174, 96]), (false, "security-low", [218, 68, 83])] {
+            let icon = button_icon("alarm_control_panel", on, 44).unwrap();
+            assert!(!icon.tint, "{name} must not be flattened by colorize");
+            let pixels = svg_image(bundled(name).unwrap(), 88).unwrap().to_rgba8().unwrap();
+            assert!(pixels.as_bytes().chunks_exact(4).any(|pixel| pixel[..3] == rgb && pixel[3] == 255));
+        }
+        assert!(button_icon("light", true, 44).unwrap().tint);
     }
 
     #[test]
