@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use zbus::zvariant::Value;
 
@@ -119,8 +119,8 @@ fn shot_dir() -> PathBuf {
 fn store_shot(bytes: &[u8], ext: &str) -> Option<String> {
     let dir = shot_dir();
     fs::create_dir_all(&dir).ok()?;
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis();
-    let dest = dir.join(format!("shot-{}-{stamp}.{ext}", std::process::id()));
+    let id = uuid::Uuid::new_v4().simple();
+    let dest = dir.join(format!("shot-{id}.{ext}"));
     let tmp = dest.with_extension(format!("{ext}.tmp"));
     {
         let mut file = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o644).open(&tmp).ok()?;

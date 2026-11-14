@@ -11,6 +11,7 @@ mod notify;
 mod place;
 mod theme;
 mod tray;
+mod windows;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -37,34 +38,6 @@ type TrayHandle = Arc<ksni::Handle<YoinTray>>;
 
 const POPUP_CLASS: &str = "yoin-popup";
 
-thread_local! {
-    static POPUP_CLASS_HELD: Cell<bool> = const { Cell::new(false) };
-}
-
-fn hold_popup_class() {
-    if POPUP_CLASS_HELD.replace(true) {
-        return;
-    }
-    let _ = slint::set_xdg_app_id(POPUP_CLASS);
-}
-
-fn release_popup_class(shell: &RefCell<Shell>) {
-    if !POPUP_CLASS_HELD.get() {
-        return;
-    }
-    let pending = |window: &slint::Window| window.is_visible() && window.with_winit_window(|_| ()).is_none();
-    let waiting = {
-        let shell = shell.borrow();
-        shell.popup.as_ref().is_some_and(|popup| pending(popup.window()))
-            || shell.notices.as_ref().is_some_and(|notices| pending(notices.window()))
-    };
-    if waiting {
-        return;
-    }
-    POPUP_CLASS_HELD.set(false);
-    let _ = slint::set_xdg_app_id("yoin");
-}
-
 struct App {
     cfg: Config,
     catalog: Catalog,
@@ -88,6 +61,9 @@ struct App {
 
 struct Shell {
     settings: Option<Settings>,
+    settings_visibility: windows::Visibility,
+    popup_visibility: windows::Visibility,
+    notices_visibility: windows::Visibility,
     popup: Option<Popup>,
     slide_timer: Option<Rc<slint::Timer>>,
     notice_slide: Option<Rc<slint::Timer>>,
@@ -181,6 +157,9 @@ fn main() {
         })),
         shell: Rc::new(RefCell::new(Shell {
             settings: None,
+            settings_visibility: windows::Visibility::default(),
+            popup_visibility: windows::Visibility::default(),
+            notices_visibility: windows::Visibility::default(),
             popup: None,
             slide_timer: None,
             notice_slide: None,
@@ -209,7 +188,6 @@ fn main() {
     let mut age_tick = Instant::now();
     let timer = slint::Timer::default();
     timer.start(slint::TimerMode::Repeated, Duration::from_millis(80), move || {
-        release_popup_class(&ctx_timer.shell);
         let mut toggles = 0u32;
         while let Ok(cmd) = tray_rx.try_recv() {
             match cmd {
@@ -264,12 +242,14 @@ fn main() {
                 }
                 ClientEv::Notify { title, message, image } => {
                     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                    let id = uuid::Uuid::new_v4().simple().to_string();
                     let open = ctx_timer.app.borrow().popup_open;
                     let notes_up = notices_of(&ctx_timer.shell).is_some_and(|notes| notes.window().is_visible());
                     let limit = ctx_timer.app.borrow().cfg.notice_limit as usize;
                     {
                         let mut app = ctx_timer.app.borrow_mut();
                         let dropped = notices::push(&mut app.notes, notices::Note {
+                            id: id.clone(),
                             title: title.clone(),
                             message: message.clone(),
                             at,
@@ -302,16 +282,16 @@ fn main() {
                             None
                         };
                         if let Some(path) = stored.clone() {
-                            let _ = back.send(ClientEv::Shot { at, path });
+                            let _ = back.send(ClientEv::Shot { id, path });
                         }
                         let shown = stored.as_deref().or(photo.as_deref());
                         notify::announce(&title, &message, &icon, shown).await;
                     });
                 }
-                ClientEv::Shot { at, path } => {
+                ClientEv::Shot { id, path } => {
                     let kept = {
                         let mut app = ctx_timer.app.borrow_mut();
-                        if notices::attach(&mut app.notes, at, path.clone()) {
+                        if notices::attach(&mut app.notes, &id, path.clone()) {
                             notices::save(&app.notes);
                             true
                         } else {
@@ -407,7 +387,7 @@ fn notices_of(shell: &RefCell<Shell>) -> Option<Notices> {
 fn hide_notices(shell: &RefCell<Shell>) {
     let Some(notices) = notices_of(shell) else { return };
     let was_open = notices.window().is_visible();
-    notices.hide().ok();
+    shell.borrow().notices_visibility.hide(&notices);
     if !was_open {
         return;
     }
@@ -451,7 +431,11 @@ fn ensure_settings(ctx: &Ctx) -> Settings {
         return settings;
     }
     let settings = Settings::new().unwrap();
-    let _ = settings.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    let visibility = ctx.shell.borrow().settings_visibility.clone();
+    let _ = settings.window().on_close_requested(move || {
+        visibility.cancel();
+        slint::CloseRequestResponse::HideWindow
+    });
     ctx.shell.borrow_mut().settings = Some(settings.clone_strong());
     paint_theme(ctx);
     fill_text(&ctx.app, &settings);
@@ -469,7 +453,11 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
         return popup;
     }
     let popup = Popup::new().unwrap();
-    let _ = popup.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    let visibility = ctx.shell.borrow().popup_visibility.clone();
+    let _ = popup.window().on_close_requested(move || {
+        visibility.cancel();
+        slint::CloseRequestResponse::HideWindow
+    });
     let weak = popup.as_weak();
     let focus = ctx_from(ctx);
     let _ = popup.window().on_winit_window_event(move |_window, event| {
@@ -552,7 +540,7 @@ fn hide_popup(ctx: &Ctx) {
         return;
     };
     if !ctx.app.borrow().popup_open {
-        popup.hide().ok();
+        ctx.shell.borrow().popup_visibility.hide(&popup);
         finish_hide(ctx, None);
         return;
     }
@@ -619,7 +607,7 @@ fn slide_closed(ctx: &Ctx, popup: &Popup) {
 fn finish_hide(ctx: &Ctx, popup: Option<&Popup>) {
     hide_notices(&ctx.shell);
     if let Some(popup) = popup {
-        popup.hide().ok();
+        ctx.shell.borrow().popup_visibility.hide(popup);
     }
     let mut app = ctx.app.borrow_mut();
     app.popup_open = false;
@@ -679,16 +667,7 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
 
 fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
-    // A popup may still be waiting for its window. Settings must not inherit
-    // that class, or the taskbar rule hides them.
-    let restore_popup_class = POPUP_CLASS_HELD.get();
-    if restore_popup_class {
-        let _ = slint::set_xdg_app_id("yoin");
-    }
-    settings.show().ok();
-    if restore_popup_class {
-        let _ = slint::set_xdg_app_id(POPUP_CLASS);
-    }
+    ctx.shell.borrow().settings_visibility.show(settings, "yoin");
     let _ = settings.window().with_winit_window(|window| {
         let scale = window.scale_factor() as f32;
         if scale.is_finite() && scale > 0.0 {
@@ -786,12 +765,11 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         app.close_popup = false;
         app.popup_at = Instant::now();
     }
-    hold_popup_class();
     refresh_popup(&ctx.app, &ctx.shell);
     popup.set_pinned(ctx.app.borrow().pinned);
     let height = popup.get_layout_height();
     popup.set_slide(if height > 1.0 { height } else { 0.0 });
-    popup.show().ok();
+    ctx.shell.borrow().popup_visibility.show(&popup, POPUP_CLASS);
     let _ = popup.window().with_winit_window(|window| {
         window.set_title("yoin-buttons");
         window.focus_window();
@@ -916,8 +894,7 @@ fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &P
         return false;
     }
     notices.set_slide(notice_h);
-    hold_popup_class();
-    notices.show().ok();
+    shell.borrow().notices_visibility.show(&notices, POPUP_CLASS);
     let _ = notices.window().with_winit_window(|window| {
         window.set_title("yoin-notices");
     });
@@ -992,7 +969,11 @@ fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices
         return existing;
     }
     let notices = Notices::new().unwrap();
-    let _ = notices.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    let visibility = shell.borrow().notices_visibility.clone();
+    let _ = notices.window().on_close_requested(move || {
+        visibility.cancel();
+        slint::CloseRequestResponse::HideWindow
+    });
     bind_notice_focus(&notices, app.clone());
     wire_notices(app, shell, &notices);
     let choice = app.borrow().cfg.theme.clone();
@@ -1476,10 +1457,11 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     let app_s = ctx.app.clone();
     let tx = ctx.client_tx.clone();
     let settings_s = settings.as_weak();
+    let visibility_s = ctx.shell.borrow().settings_visibility.clone();
     settings.on_save(move || {
         if let Some(settings) = settings_s.upgrade() {
             if store(&app_s, &settings, &tx, true) {
-                settings.hide().ok();
+                visibility_s.hide(&settings);
             }
         }
     });

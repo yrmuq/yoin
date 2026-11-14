@@ -38,6 +38,12 @@ jobs:
             target
           key: yoin-ubuntu-x64-stable-${{ hashFiles('Cargo.lock') }}
 
+      - name: Test
+        run: |
+          node --test tests/*.cjs
+          cargo test --locked
+          cargo test --locked --manifest-path packaging/tools/Cargo.toml
+
       - name: Build
         run: bash packaging/appimage/build.sh
 
@@ -74,7 +80,12 @@ jobs:
           test -s dist/yoin-x86_64.AppImage.zsync
           test -s dist/yoin-x86_64.AppImage.sha256
           chmod +x dist/yoin-x86_64.AppImage
-          printf '%s\n' 'Development build from dev. Not a release.' > notes.md
+          current="$(git ls-remote origin refs/heads/dev | cut -f1)"
+          if [ "$current" != "$GITHUB_SHA" ]; then
+            echo "Skipping draft update for a superseded commit."
+            exit 0
+          fi
+          printf 'Development build from dev. Not a release.\n\nSource: %s\n' "$GITHUB_SHA" > notes.md
           if ! gh release view dev --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "the dev draft is missing, and this job does not create a tag" >&2
             exit 1
@@ -94,5 +105,6 @@ jobs:
           gh release edit dev \
             --repo "$GITHUB_REPOSITORY" \
             --draft \
+            --target "$GITHUB_SHA" \
             --title "yoin dev" \
             --notes-file notes.md

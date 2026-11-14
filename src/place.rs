@@ -3,8 +3,18 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const SCRIPT: &str = include_str!("../kwin/placer.js");
+
+struct RuleReload(tokio::sync::mpsc::UnboundedSender<()>);
+
+#[zbus::interface(name = "io.github.yrmuq.yoin.Placer")]
+impl RuleReload {
+    fn ready(&self) {
+        let _ = self.0.send(());
+    }
+}
 
 pub async fn install() -> bool {
     let cache = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".cache"));
@@ -13,14 +23,20 @@ pub async fn install() -> bool {
         return false;
     }
     let path = folder.join("placer.js");
-    if fs::write(&path, SCRIPT).is_err() {
-        return false;
-    }
     let Ok(conn) = zbus::Connection::session().await else { return false };
     stop_saved(&conn, &folder.join("placer.id")).await;
-    let rules_changed = write_taskbar_rule();
-    if rules_changed {
-        let _ = conn.call_method(Some("org.kde.KWin"), "/KWin", Some("org.kde.KWin"), "reconfigure", &()).await;
+    if !write_taskbar_rule() {
+        return false;
+    }
+    let (ready, mut reloaded) = tokio::sync::mpsc::unbounded_channel();
+    if conn.object_server().at("/yoin/Placer", RuleReload(ready)).await.is_err() {
+        return false;
+    }
+    let Some(destination) = conn.unique_name() else { return false };
+    let destination = serde_json::to_string(destination.as_str()).unwrap();
+    let script = format!("const yoinReadyBus = {destination};\n{SCRIPT}");
+    if fs::write(&path, script).is_err() {
+        return false;
     }
     let reply = conn
         .call_method(
@@ -38,7 +54,14 @@ pub async fn install() -> bool {
     if ran {
         let _ = fs::write(folder.join("placer.id"), id.to_string());
     }
-    ran
+    if !ran || conn.call_method(Some("org.kde.KWin"), "/KWin", Some("org.kde.KWin"), "reconfigure", &()).await.is_err() {
+        return false;
+    }
+    if tokio::time::timeout(Duration::from_secs(5), reloaded.recv()).await.ok().flatten().is_none() {
+        return false;
+    }
+    // The signal precedes rule loading; a round trip waits for that dispatch to finish.
+    conn.call_method(Some("org.kde.KWin"), "/KWin", Some("org.kde.KWin"), "supportInformation", &()).await.is_ok()
 }
 
 async fn stop_saved(conn: &zbus::Connection, path: &std::path::Path) {
@@ -63,11 +86,12 @@ wmclasscomplete=false
 ";
 
 /// KWin applies window rules while the window is created, before the task
-/// manager can show an icon. Returns true when the file changed.
+/// manager can show an icon. Returns true when the rule is ready on disk.
 fn write_taskbar_rule() -> bool {
-    let path = crate::config::home().join(".config").join("kwinrulesrc");
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".config"));
+    let path = base.join("kwinrulesrc");
     let previous = fs::read_to_string(&path).unwrap_or_default();
-    let Some(next) = merge_kwin_rules(&previous) else { return false };
+    let Some(next) = merge_kwin_rules(&previous) else { return true };
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }

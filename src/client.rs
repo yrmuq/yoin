@@ -34,7 +34,7 @@ pub enum ClientEv {
     Entities(Vec<Entity>),
     State(Entity),
     Notify { title: String, message: String, image: Option<String> },
-    Shot { at: i64, path: String },
+    Shot { id: String, path: String },
     Linked(bool),
 }
 
@@ -56,6 +56,10 @@ pub fn spawn(mut cmds: mpsc::UnboundedReceiver<ClientCmd>, out: mpsc::UnboundedS
             let current = session.clone().unwrap();
             match run_once(current, &mut cmds, &mut calls, &out).await {
                 Loop::Stop => return,
+                Loop::Wait => {
+                    session = None;
+                    calls.clear();
+                }
                 Loop::Retry { session: next, immediate } => {
                     let _ = out.send(ClientEv::Linked(false));
                     session = Some(next);
@@ -63,7 +67,10 @@ pub fn spawn(mut cmds: mpsc::UnboundedReceiver<ClientCmd>, out: mpsc::UnboundedS
                         tokio::select! {
                             _ = tokio::time::sleep(Duration::from_secs(5)) => {}
                             cmd = cmds.recv() => match cmd {
-                                Some(ClientCmd::Start(next)) => session = Some(next),
+                                Some(ClientCmd::Start(next)) => {
+                                    calls.clear();
+                                    session = Some(next);
+                                }
                                 Some(ClientCmd::Call { entity, state }) => calls.push((entity, state)),
                                 None => return,
                             }
@@ -77,6 +84,7 @@ pub fn spawn(mut cmds: mpsc::UnboundedReceiver<ClientCmd>, out: mpsc::UnboundedS
 
 enum Loop {
     Retry { session: Session, immediate: bool },
+    Wait,
     Stop,
 }
 
@@ -93,6 +101,7 @@ async fn run_once(
                 let _ = out.send(ClientEv::Registered(webhook));
             }
             Err(code) => {
+                let _ = out.send(ClientEv::Linked(false));
                 let _ = out.send(match code {
                     27 => ClientEv::Status(27),
                     30 => ClientEv::Status(30),
@@ -100,15 +109,16 @@ async fn run_once(
                     28 => ClientEv::Status(28),
                     other => ClientEv::StatusText(crate::i18n::Catalog::load(&crate::i18n::language_dir(), "English").trf(29, &[&other.to_string()])),
                 });
-                return if code == 27 { Loop::Stop } else { Loop::Retry { session, immediate: false } };
+                return if code == 27 { Loop::Wait } else { Loop::Retry { session, immediate: false } };
             }
         }
     }
     let url = match ha::ws_url(&session.url) {
         Ok(url) => url,
         Err(_) => {
+            let _ = out.send(ClientEv::Linked(false));
             let _ = out.send(ClientEv::Status(28));
-            return Loop::Stop;
+            return Loop::Wait;
         }
     };
     let Ok((socket, _)) = connect_async(&url).await else {
@@ -140,6 +150,7 @@ async fn run_once(
             cmd = cmds.recv() => {
                 match cmd {
                     Some(ClientCmd::Start(next)) => {
+                        calls.clear();
                         writer.abort();
                         return Loop::Retry { session: next, immediate: true };
                     }
@@ -169,9 +180,10 @@ async fn run_once(
                         let _ = tx.send(json!({"type": "auth", "access_token": session.token}).to_string());
                     }
                     "auth_invalid" => {
+                        let _ = out.send(ClientEv::Linked(false));
                         let _ = out.send(ClientEv::Status(27));
                         writer.abort();
-                        return Loop::Stop;
+                        return Loop::Wait;
                     }
                     "auth_ok" => {
                         next_id += 1;
@@ -298,4 +310,81 @@ async fn register(session: &Session) -> Result<String, u16> {
     }
     let data: Value = response.json().await.map_err(|_| 30u16)?;
     data.get("webhook_id").and_then(Value::as_str).filter(|s| !s.is_empty()).map(|s| s.to_string()).ok_or(31)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejected_registration_keeps_accepting_settings() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut request = [0; 4096];
+            stream.read(&mut request).unwrap();
+            stream.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+        });
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let (tx, rx) = mpsc::unbounded_channel();
+            let (out, mut events) = mpsc::unbounded_channel();
+            spawn(rx, out);
+            let mut session = Session { url, token: "invalid".into(), webhook_id: String::new(), device_id: "test".into(), device_name: "test".into() };
+            tx.send(ClientCmd::Start(session.clone())).unwrap();
+            while !matches!(events.recv().await.unwrap(), ClientEv::Status(27)) {}
+            session.url = "invalid-address".into();
+            session.webhook_id = "registered".into();
+            tx.send(ClientCmd::Start(session)).unwrap();
+            while !matches!(events.recv().await.unwrap(), ClientEv::Status(28)) {}
+        }).await.expect("registration rejection stopped the client");
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn corrected_credentials_reconnect_after_rejection() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                for accepted in [false, true] {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    socket.send(Message::Text(json!({"type": "auth_required"}).to_string().into())).await.unwrap();
+                    let auth = socket.next().await.unwrap().unwrap();
+                    let auth: Value = serde_json::from_str(auth.to_text().unwrap()).unwrap();
+                    assert_eq!(auth["access_token"], if accepted { "corrected" } else { "invalid" });
+                    let kind = if accepted { "auth_ok" } else { "auth_invalid" };
+                    socket.send(Message::Text(json!({"type": kind}).to_string().into())).await.unwrap();
+                    if accepted {
+                        for _ in 0..3 {
+                            socket.next().await.unwrap().unwrap();
+                        }
+                    }
+                }
+            });
+            let (tx, rx) = mpsc::unbounded_channel();
+            let (out, mut events) = mpsc::unbounded_channel();
+            spawn(rx, out);
+            let mut session = Session { url, token: "invalid".into(), webhook_id: "registered".into(), device_id: "test".into(), device_name: "test".into() };
+            tx.send(ClientCmd::Start(session.clone())).unwrap();
+            loop {
+                if matches!(events.recv().await.unwrap(), ClientEv::Status(27)) {
+                    break;
+                }
+            }
+            session.token = "corrected".into();
+            tx.send(ClientCmd::Start(session)).unwrap();
+            loop {
+                if matches!(events.recv().await.unwrap(), ClientEv::Linked(true)) {
+                    break;
+                }
+            }
+            server.await.unwrap();
+            drop(tx);
+        }).await.expect("client stopped accepting connection settings");
+    }
 }

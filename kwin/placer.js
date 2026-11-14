@@ -337,3 +337,10 @@ function arm(window) {
 
 workspace.windowAdded.connect(arm);
 workspace.windowList().forEach(arm);
+
+function yoinRulesReloaded() {
+    options.configChanged.disconnect(yoinRulesReloaded);
+    callDBus(yoinReadyBus, "/yoin/Placer", "io.github.yrmuq.yoin.Placer", "Ready");
+}
+
+options.configChanged.connect(yoinRulesReloaded);
