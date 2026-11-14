@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub const MAX_BUTTONS: usize = 10;
 pub const DEFAULT_SETTINGS_WIDTH: u32 = 600;
 pub const DEFAULT_SETTINGS_HEIGHT: u32 = 630;
-pub const DEFAULT_LOGO_SIZE: u32 = 69;
+pub const DEFAULT_LOGO_SIZE: u32 = 100;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +27,7 @@ pub struct Config {
     pub icons: Vec<String>,
     pub lock_window_size: bool,
     pub autostart: bool,
+    pub auto_check_updates: bool,
     pub language: String,
     pub theme: String,
     pub layout: String,
@@ -56,6 +57,7 @@ impl Default for Config {
             icons: vec![String::new()],
             lock_window_size: true,
             autostart: false,
+            auto_check_updates: true,
             language: String::new(),
             theme: "system".into(),
             layout: "list".into(),
@@ -275,8 +277,9 @@ mod tests {
         assert!(!cfg.notices_hidden);
         assert_eq!(cfg.notice_limit, 3);
         assert_eq!(cfg.labels, vec![String::new()]);
-        assert_eq!((cfg.settings_width, cfg.settings_height, cfg.logo_size), (600, 630, 69));
+        assert_eq!((cfg.settings_width, cfg.settings_height, cfg.logo_size), (600, 630, 100));
         assert!(cfg.lock_window_size);
+        assert!(cfg.auto_check_updates);
         assert_eq!(cfg.icons, vec![String::new()]);
     }
 
@@ -313,11 +316,13 @@ mod tests {
         assert_eq!(cfg.icons, ["", "fan"]);
         assert!(!record_window_size(&mut cfg, 800, 700));
         cfg.lock_window_size = false;
+        cfg.auto_check_updates = false;
         assert!(record_window_size(&mut cfg, 800, 700));
         assert!(!record_window_size(&mut cfg, 800, 700));
         let restored = normalize(serde_json::from_str(&serde_json::to_string(&cfg).unwrap()).unwrap());
         assert_eq!((restored.settings_width, restored.settings_height), (800, 700));
         assert!(!restored.lock_window_size);
+        assert!(!restored.auto_check_updates);
     }
 
     #[test]

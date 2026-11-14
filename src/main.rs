@@ -20,7 +20,6 @@ use std::os::fd::AsRawFd;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
@@ -57,6 +56,7 @@ struct App {
     placer_ok: bool,
     place_warned: bool,
     status: String,
+    connection: u32,
     notes: Vec<notices::Note>,
 }
 
@@ -155,6 +155,7 @@ fn main() {
             placer_ok,
             place_warned: false,
             status: String::new(),
+            connection: 26,
             notes,
         })),
         shell: Rc::new(RefCell::new(Shell {
@@ -311,10 +312,12 @@ fn main() {
                         notices::forget(&[path]);
                     }
                 }
-                ClientEv::Linked(up) => {
-                    let id = if up { 22 } else { 24 };
-                    let text = ctx_timer.app.borrow().catalog.tr(id);
-                    note_status(&ctx_timer, text);
+                ClientEv::Connection(id) => {
+                    ctx_timer.app.borrow_mut().connection = id;
+                    if id == 21 { note_status(&ctx_timer, String::new()); }
+                    if let Some(settings) = settings_of(&ctx_timer.shell) {
+                        fill_connection(&ctx_timer.app.borrow(), &settings);
+                    }
                 }
             }
         }
@@ -415,6 +418,11 @@ fn tray_has_focus(shell: &RefCell<Shell>) -> bool {
 
 fn window_focused(window: &slint::Window) -> bool {
     window.with_winit_window(|winit| winit.has_focus()).unwrap_or(false)
+}
+
+fn fill_connection(app: &App, settings: &Settings) {
+    settings.set_connection_state(app.connection as i32);
+    settings.set_connection_status(app.catalog.tr(app.connection).into());
 }
 
 fn note_status(ctx: &Ctx, text: String) {
@@ -1353,9 +1361,14 @@ fn dev_icon_report(app: &App) -> String {
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     let app_ref = app.borrow();
     let cat = &app_ref.catalog;
+    fill_connection(&app_ref, settings);
+    settings.set_auto_check_updates(app_ref.cfg.auto_check_updates);
+    settings.set_t_auto_check_updates(cat.tr(101).into());
+    settings.set_t_check_update(cat.tr(102).into());
+    settings.set_t_icon_sources(cat.tr(103).into());
     settings.set_t_connection(cat.tr(10).into());
-    settings.set_t_buttons(cat.tr(11).into());
-    settings.set_t_appearance(cat.tr(18).into());
+    settings.set_t_devices(cat.tr(11).into());
+    settings.set_t_general(cat.tr(18).into());
     settings.set_t_address(cat.tr(3).into());
     settings.set_t_token(cat.tr(4).into());
     settings.set_t_token_hint(cat.tr(25).into());
@@ -1809,7 +1822,7 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     });
     let ctx_reset = ctx_from(ctx);
     let settings_reset = settings.as_weak();
-    settings.on_reset_appearance(move || {
+    settings.on_reset_general(move || {
         let Some(settings) = settings_reset.upgrade() else { return };
         let language = i18n::match_language(&i18n::language_dir(), &i18n::system_languages());
         let dropped = {
@@ -1855,33 +1868,56 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
             app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
             app.cfg.lock_window_size = true;
+            app.cfg.auto_check_updates = true;
             let _ = config::save_config(&app.cfg, &config::config_path());
         }
+        settings.set_auto_check_updates(true);
         apply_metrics(&settings, &ctx_dev.app.borrow().cfg);
     });
-    let ctx_about = ctx_from(ctx);
+    let app_auto = ctx.app.clone();
+    settings.on_auto_check_updates_changed(move |enabled| {
+        app_auto.borrow_mut().cfg.auto_check_updates = enabled;
+        let _ = config::save_config(&app_auto.borrow().cfg, &config::config_path());
+    });
     let settings_about = settings.as_weak();
-    let checking = Arc::new(AtomicBool::new(false));
     settings.on_about_opened(move || {
-        if checking.swap(true, Ordering::SeqCst) {
-            return;
-        }
         if let Some(settings) = settings_about.upgrade() {
-            settings.set_update_note("".into());
-            settings.set_update_ok(false);
-            settings.set_update_has_download(false);
+            if settings.get_auto_check_updates() { settings.invoke_check_update(); }
         }
-        let checking = checking.clone();
-        let settings_about = settings_about.clone();
-        let catalog = ctx_about.app.borrow().catalog.clone();
-        ctx_about.rt.spawn(async move {
+    });
+    let settings_check = settings.as_weak();
+    let app_check = ctx.app.clone();
+    let rt_check = ctx.rt.clone();
+    settings.on_check_update(move || {
+        let Some(settings) = settings_check.upgrade() else { return };
+        if settings.get_checking_update() { return; }
+        settings.set_checking_update(true);
+        settings.set_update_note("".into());
+        settings.set_update_ok(false);
+        settings.set_update_has_download(false);
+        let settings_check = settings_check.clone();
+        let catalog = app_check.borrow().catalog.clone();
+        rt_check.spawn(async move {
             let found = fetch_latest().await;
             let _ = slint::invoke_from_event_loop(move || {
-                checking.store(false, Ordering::SeqCst);
-                let Some(settings) = settings_about.upgrade() else { return };
+                let Some(settings) = settings_check.upgrade() else { return };
+                settings.set_checking_update(false);
                 show_release(&settings, &catalog, found);
             });
         });
+    });
+    let app_autostart = ctx.app.clone();
+    let settings_autostart = settings.as_weak();
+    settings.on_autostart_changed(move |enabled| {
+        let Some(settings) = settings_autostart.upgrade() else { return };
+        if let Err(err) = config::apply_autostart(enabled, &config::autostart_path()) {
+            settings.set_autostart(app_autostart.borrow().cfg.autostart);
+            settings.set_status(app_autostart.borrow().catalog.trf(20, &[&err.to_string()]).into());
+            return;
+        }
+        app_autostart.borrow_mut().cfg.autostart = enabled;
+        let _ = config::save_config(&app_autostart.borrow().cfg, &config::config_path());
+        settings.set_status("".into());
     });
     let settings_download = settings.as_weak();
     settings.on_open_download(move || {
@@ -1959,7 +1995,6 @@ fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::Un
         cfg.device_name = config::hostname();
         settings.set_device(cfg.device_name.clone().into());
     }
-    cfg.autostart = settings.get_autostart();
     if cfg.url.is_empty() || cfg.token.is_empty() {
         settings.set_status(app.borrow().catalog.tr(19).into());
         return false;
@@ -1971,15 +2006,14 @@ fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::Un
     if cfg.device_id.is_empty() {
         cfg.device_id = uuid::Uuid::new_v4().simple().to_string();
     }
-    if let Err(err) = config::apply_autostart(cfg.autostart, &config::autostart_path()) {
-        settings.set_status(app.borrow().catalog.trf(20, &[&err.to_string()]).into());
-        return false;
-    }
     app.borrow_mut().cfg = cfg;
     if config::save_config(&app.borrow().cfg, &config::config_path()).is_err() {
         return false;
     }
-    settings.set_status(app.borrow().catalog.tr(21).into());
+    app.borrow_mut().status.clear();
+    app.borrow_mut().connection = 21;
+    fill_connection(&app.borrow(), settings);
+    settings.set_status("".into());
     start_client(app, tx);
     close
 }

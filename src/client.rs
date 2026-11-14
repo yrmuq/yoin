@@ -35,7 +35,7 @@ pub enum ClientEv {
     State(Entity),
     Notify { title: String, message: String, image: Option<String> },
     Shot { id: String, path: String },
-    Linked(bool),
+    Connection(u32),
 }
 
 pub fn spawn(mut cmds: mpsc::UnboundedReceiver<ClientCmd>, out: mpsc::UnboundedSender<ClientEv>) {
@@ -61,7 +61,6 @@ pub fn spawn(mut cmds: mpsc::UnboundedReceiver<ClientCmd>, out: mpsc::UnboundedS
                     calls.clear();
                 }
                 Loop::Retry { session: next, immediate } => {
-                    let _ = out.send(ClientEv::Linked(false));
                     session = Some(next);
                     if !immediate {
                         tokio::select! {
@@ -94,6 +93,7 @@ async fn run_once(
     calls: &mut Vec<(String, String)>,
     out: &mpsc::UnboundedSender<ClientEv>,
 ) -> Loop {
+    let _ = out.send(ClientEv::Connection(21));
     if session.webhook_id.is_empty() {
         match register(&session).await {
             Ok(webhook) => {
@@ -101,13 +101,15 @@ async fn run_once(
                 let _ = out.send(ClientEv::Registered(webhook));
             }
             Err(code) => {
-                let _ = out.send(ClientEv::Linked(false));
                 let _ = out.send(match code {
-                    27 => ClientEv::Status(27),
-                    30 => ClientEv::Status(30),
-                    31 => ClientEv::Status(31),
-                    28 => ClientEv::Status(28),
-                    other => ClientEv::StatusText(crate::i18n::Catalog::load(&crate::i18n::language_dir(), "English").trf(29, &[&other.to_string()])),
+                    27 => ClientEv::Connection(27),
+                    30 => ClientEv::Connection(30),
+                    31 => ClientEv::Connection(31),
+                    28 => ClientEv::Connection(28),
+                    other => {
+                        let _ = out.send(ClientEv::Connection(32));
+                        ClientEv::StatusText(crate::i18n::Catalog::load(&crate::i18n::language_dir(), "English").trf(29, &[&other.to_string()]))
+                    },
                 });
                 return if code == 27 { Loop::Wait } else { Loop::Retry { session, immediate: false } };
             }
@@ -116,13 +118,12 @@ async fn run_once(
     let url = match ha::ws_url(&session.url) {
         Ok(url) => url,
         Err(_) => {
-            let _ = out.send(ClientEv::Linked(false));
-            let _ = out.send(ClientEv::Status(28));
+            let _ = out.send(ClientEv::Connection(28));
             return Loop::Wait;
         }
     };
-    let Ok((socket, _)) = connect_async(&url).await else {
-        let _ = out.send(ClientEv::Status(28));
+    let Ok(Ok((socket, _))) = tokio::time::timeout(Duration::from_secs(15), connect_async(&url)).await else {
+        let _ = out.send(ClientEv::Connection(28));
         return Loop::Retry { session, immediate: false };
     };
     let (mut write, mut read) = socket.split();
@@ -139,6 +140,10 @@ async fn run_once(
     let mut state_id: Option<i64> = None;
     let mut pending: Vec<(i64, &'static str)> = Vec::new();
     let mut service_ids: Vec<(i64, String)> = Vec::new();
+    let mut ready = false;
+    let mut heartbeat = tokio::time::interval(Duration::from_secs(30));
+    heartbeat.tick().await;
+    let mut last_received = tokio::time::Instant::now();
     let send = |tx: &mpsc::UnboundedSender<String>, id: i64, mut body: Value| {
         if let Some(map) = body.as_object_mut() {
             map.insert("id".into(), json!(id));
@@ -155,7 +160,7 @@ async fn run_once(
                         return Loop::Retry { session: next, immediate: true };
                     }
                     Some(ClientCmd::Call { entity, state }) => {
-                        if push_id.is_none() {
+                        if !ready {
                             calls.push((entity, state));
                         } else {
                             send_service(&tx, &mut next_id, &mut service_ids, out, &entity, &state);
@@ -167,11 +172,32 @@ async fn run_once(
                     }
                 }
             }
-            incoming = tokio::time::timeout(Duration::from_secs(90), read.next()) => {
-                let Ok(Some(Ok(message))) = incoming else {
+            _ = heartbeat.tick() => {
+                if !ready {
+                    let _ = out.send(ClientEv::Connection(32));
+                    writer.abort();
+                    return Loop::Retry { session, immediate: false };
+                }
+                if last_received.elapsed() >= Duration::from_secs(90) {
+                    let _ = out.send(ClientEv::Connection(24));
+                    writer.abort();
+                    return Loop::Retry { session, immediate: false };
+                }
+                next_id += 1;
+                send(&tx, next_id, json!({"type": "ping"}));
+            }
+            incoming = read.next() => {
+                let Some(Ok(message)) = incoming else {
+                    let _ = out.send(ClientEv::Connection(24));
                     writer.abort();
                     return Loop::Retry { session, immediate: false };
                 };
+                last_received = tokio::time::Instant::now();
+                if matches!(message, Message::Close(_)) {
+                    let _ = out.send(ClientEv::Connection(24));
+                    writer.abort();
+                    return Loop::Retry { session, immediate: false };
+                }
                 let Message::Text(text) = message else { continue };
                 let Ok(data) = serde_json::from_str::<Value>(text.as_str()) else { continue };
                 let kind = data.get("type").and_then(Value::as_str).unwrap_or("");
@@ -180,8 +206,7 @@ async fn run_once(
                         let _ = tx.send(json!({"type": "auth", "access_token": session.token}).to_string());
                     }
                     "auth_invalid" => {
-                        let _ = out.send(ClientEv::Linked(false));
-                        let _ = out.send(ClientEv::Status(27));
+                        let _ = out.send(ClientEv::Connection(27));
                         writer.abort();
                         return Loop::Wait;
                     }
@@ -195,13 +220,8 @@ async fn run_once(
                         send(&tx, next_id, json!({"type": "get_states"}));
                         next_id += 1;
                         state_id = Some(next_id);
+                        pending.push((next_id, "events"));
                         send(&tx, next_id, json!({"type": "subscribe_events", "event_type": "state_changed"}));
-                        let _ = out.send(ClientEv::Linked(true));
-                        let _ = out.send(ClientEv::Status(22));
-                        let queued: Vec<_> = calls.drain(..).collect();
-                        for (entity, state) in queued {
-                            send_service(&tx, &mut next_id, &mut service_ids, out, &entity, &state);
-                        }
                     }
                     "ping" => {
                         let id = data.get("id").cloned().unwrap_or(Value::Null);
@@ -231,14 +251,22 @@ async fn run_once(
                         if let Some(id) = ident {
                             if let Some(pos) = pending.iter().position(|(n, _)| *n == id) {
                                 let (_, kind) = pending.remove(pos);
-                                if kind == "push" && !ok {
-                                    session.webhook_id.clear();
+                                if !ok {
+                                    if kind == "push" { session.webhook_id.clear(); }
+                                    let _ = out.send(ClientEv::Connection(32));
                                     writer.abort();
                                     return Loop::Retry { session, immediate: false };
                                 }
                                 if kind == "states" && ok {
                                     let list = ha::entities_from_states(data.get("result").unwrap_or(&Value::Null));
                                     let _ = out.send(ClientEv::Entities(list));
+                                }
+                                if pending.is_empty() && !ready {
+                                    ready = true;
+                                    let _ = out.send(ClientEv::Connection(22));
+                                    for (entity, state) in calls.drain(..) {
+                                        send_service(&tx, &mut next_id, &mut service_ids, out, &entity, &state);
+                                    }
                                 }
                             }
                             if let Some(pos) = service_ids.iter().position(|(n, _)| *n == id) {
@@ -291,7 +319,7 @@ async fn register(session: &Session) -> Result<String, u16> {
     if ha::ws_url(&session.url).is_err() {
         return Err(28);
     }
-    let client = reqwest::Client::builder().use_rustls_tls().build().map_err(|_| 28u16)?;
+    let client = reqwest::Client::builder().use_rustls_tls().timeout(Duration::from_secs(15)).build().map_err(|_| 28u16)?;
     let os_version = std::fs::read_to_string("/proc/sys/kernel/osrelease").unwrap_or_else(|_| "linux".into());
     let body = ha::registration_body(&session.device_id, &session.device_name, env!("CARGO_PKG_VERSION"), os_version.trim());
     let response = client
@@ -317,6 +345,48 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn connection_waits_for_subscriptions_and_reports_failure_or_disconnect() {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for accepted in [false, true] {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let url = format!("http://{}", listener.local_addr().unwrap());
+                let (release, wait) = tokio::sync::oneshot::channel();
+                let server = tokio::spawn(async move {
+                    let (stream, _) = listener.accept().await.unwrap();
+                    let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    socket.send(Message::Text(json!({"type": "auth_ok"}).to_string().into())).await.unwrap();
+                    for index in 0..3 {
+                        let request = socket.next().await.unwrap().unwrap();
+                        let request: Value = serde_json::from_str(request.to_text().unwrap()).unwrap();
+                        if index == 2 {
+                            wait.await.unwrap();
+                            socket.send(Message::Text(json!({"id": request["id"], "type": "result", "success": accepted}).to_string().into())).await.unwrap();
+                            if accepted { socket.close(None).await.unwrap(); }
+                            break;
+                        }
+                        socket.send(Message::Text(json!({"id": request["id"], "type": "result", "success": true, "result": []}).to_string().into())).await.unwrap();
+                    }
+                });
+                let (_tx, mut rx) = mpsc::unbounded_channel();
+                let (out, mut events) = mpsc::unbounded_channel();
+                let worker = tokio::spawn(async move {
+                    let session = Session { url, token: "test".into(), webhook_id: "registered".into(), device_id: "test".into(), device_name: "test".into() };
+                    run_once(session, &mut rx, &mut Vec::new(), &out).await;
+                });
+                assert!(matches!(events.recv().await.unwrap(), ClientEv::Connection(21)));
+                assert!(matches!(events.recv().await.unwrap(), ClientEv::Entities(_)));
+                assert!(tokio::time::timeout(Duration::from_millis(50), events.recv()).await.is_err(), "reported connected before subscription confirmation");
+                release.send(()).unwrap();
+                let expected = if accepted { 22 } else { 32 };
+                assert!(matches!(events.recv().await.unwrap(), ClientEv::Connection(id) if id == expected));
+                if accepted { assert!(matches!(events.recv().await.unwrap(), ClientEv::Connection(24))); }
+                worker.await.unwrap();
+                server.await.unwrap();
+            }
+        }).await.expect("connection status did not settle");
+    }
+
+    #[tokio::test]
     async fn rejected_registration_keeps_accepting_settings() {
         use std::io::{Read, Write};
 
@@ -335,11 +405,11 @@ mod tests {
             spawn(rx, out);
             let mut session = Session { url, token: "invalid".into(), webhook_id: String::new(), device_id: "test".into(), device_name: "test".into() };
             tx.send(ClientCmd::Start(session.clone())).unwrap();
-            while !matches!(events.recv().await.unwrap(), ClientEv::Status(27)) {}
+            while !matches!(events.recv().await.unwrap(), ClientEv::Connection(27)) {}
             session.url = "invalid-address".into();
             session.webhook_id = "registered".into();
             tx.send(ClientCmd::Start(session)).unwrap();
-            while !matches!(events.recv().await.unwrap(), ClientEv::Status(28)) {}
+            while !matches!(events.recv().await.unwrap(), ClientEv::Connection(28)) {}
         }).await.expect("registration rejection stopped the client");
         server.join().unwrap();
     }
@@ -361,7 +431,9 @@ mod tests {
                     socket.send(Message::Text(json!({"type": kind}).to_string().into())).await.unwrap();
                     if accepted {
                         for _ in 0..3 {
-                            socket.next().await.unwrap().unwrap();
+                            let request = socket.next().await.unwrap().unwrap();
+                            let request: Value = serde_json::from_str(request.to_text().unwrap()).unwrap();
+                            socket.send(Message::Text(json!({"id": request["id"], "type": "result", "success": true, "result": []}).to_string().into())).await.unwrap();
                         }
                     }
                 }
@@ -372,14 +444,14 @@ mod tests {
             let mut session = Session { url, token: "invalid".into(), webhook_id: "registered".into(), device_id: "test".into(), device_name: "test".into() };
             tx.send(ClientCmd::Start(session.clone())).unwrap();
             loop {
-                if matches!(events.recv().await.unwrap(), ClientEv::Status(27)) {
+                if matches!(events.recv().await.unwrap(), ClientEv::Connection(27)) {
                     break;
                 }
             }
             session.token = "corrected".into();
             tx.send(ClientCmd::Start(session)).unwrap();
             loop {
-                if matches!(events.recv().await.unwrap(), ClientEv::Linked(true)) {
+                if matches!(events.recv().await.unwrap(), ClientEv::Connection(22)) {
                     break;
                 }
             }
