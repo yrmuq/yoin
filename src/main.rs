@@ -30,13 +30,11 @@ use crate::config::Config;
 use crate::ha::Entity;
 use crate::i18n::Catalog;
 use crate::tray::{TrayCmd, TrayView, YoinTray};
+use crate::windows::{POPUP_CLASS, NOTICES_CLASS};
 
 slint::include_modules!();
 
 type TrayHandle = Arc<ksni::Handle<YoinTray>>;
-
-const POPUP_CLASS: &str = "yoin-popup-buttons";
-const NOTICES_CLASS: &str = "yoin-popup-notices";
 
 struct App {
     cfg: Config,
@@ -91,7 +89,7 @@ fn main() {
     if let Err(err) = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("femtovg".into())
-        .with_winit_window_attributes_hook(|attributes| attributes.with_transparent(true))
+        .with_winit_window_attributes_hook(windows::window_attributes)
         .select()
     {
         eprintln!("yoin: graphics: {err}");
@@ -491,7 +489,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     if let Some(popup) = popup_of(&ctx.shell) {
         return popup;
     }
-    let popup = Popup::new().unwrap();
+    let popup = windows::new_panel(POPUP_CLASS, Popup::new).unwrap();
     let visibility = ctx.shell.borrow().popup_visibility.clone();
     let _ = popup.window().on_close_requested(move || {
         visibility.cancel();
@@ -503,11 +501,16 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     let _ = popup.window().on_winit_window_event(move |_window, event| {
         match event {
             winit::event::WindowEvent::RedrawRequested => frames.redraw_requested(),
-            winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                if let Some(popup) = weak.upgrade() {
-                    sharpen_popup(&popup);
-                    refresh_popup_at(&focus.app, &focus.shell, *scale_factor as f32);
-                }
+            winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                let weak = weak.clone();
+                let focus = ctx_from(&focus);
+                // The event hook runs before Slint has applied the new scale factor.
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(popup) = weak.upgrade() {
+                        sharpen_popup(&popup);
+                        refresh_popup(&focus.app, &focus.shell);
+                    }
+                });
             }
             winit::event::WindowEvent::Focused(true) => {
                 let mut app = focus.app.borrow_mut();
@@ -823,12 +826,10 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         if !ready.app.borrow().popup_open || ready.app.borrow().closing { return; }
         ready.app.borrow_mut().popup_at = Instant::now();
         let _ = popup.window().with_winit_window(|window| {
-            window.set_title("yoin-buttons");
-            window.set_decorations(false);
-            window.set_resizable(false);
             window.focus_window();
         });
         sharpen_popup(&popup);
+        size_panel(popup.window(), popup.get_layout_width(), popup.get_layout_height());
         sync_notices(&ready.app, &ready.shell);
         start_slide(&ready, &popup);
     });
@@ -971,11 +972,7 @@ fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &P
             hide_notices(&shell_ready);
             return;
         }
-        let _ = notices.window().with_winit_window(|window| {
-            window.set_title("yoin-notices");
-            window.set_decorations(false);
-            window.set_resizable(false);
-        });
+        size_panel(notices.window(), notices.get_pane_width(), notices.get_notice_h());
         if let Some(popup) = popup_of(&shell_ready) {
             let _ = popup.window().with_winit_window(|window| window.focus_window());
         }
@@ -1047,7 +1044,7 @@ fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices
     if let Some(existing) = notices_of(shell) {
         return existing;
     }
-    let notices = Notices::new().unwrap();
+    let notices = windows::new_panel(NOTICES_CLASS, Notices::new).unwrap();
     let visibility = shell.borrow().notices_visibility.clone();
     let _ = notices.window().on_close_requested(move || {
         visibility.cancel();

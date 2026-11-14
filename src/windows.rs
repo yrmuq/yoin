@@ -6,11 +6,53 @@ use std::rc::Rc;
 
 use futures_util::future::{AbortHandle, Abortable};
 use futures_util::lock::Mutex;
-use slint::winit_030::WinitWindowAccessor;
+use slint::winit_030::{winit, WinitWindowAccessor};
 use slint::ComponentHandle;
 
+pub const POPUP_CLASS: &str = "yoin-popup-buttons";
+pub const NOTICES_CLASS: &str = "yoin-popup-notices";
+
 thread_local! {
+    static INITIAL_CLASS: Cell<&'static str> = const { Cell::new("") };
     static CREATION: Rc<Mutex<()>> = Rc::new(Mutex::new(()));
+}
+
+struct InitialClassGuard(&'static str);
+
+impl InitialClassGuard {
+    fn new(class: &'static str) -> Self {
+        Self(INITIAL_CLASS.with(|current| current.replace(class)))
+    }
+}
+
+impl Drop for InitialClassGuard {
+    fn drop(&mut self) {
+        INITIAL_CLASS.with(|current| current.set(self.0));
+    }
+}
+
+fn panel_title(class: &str) -> Option<&'static str> {
+    match class {
+        POPUP_CLASS => Some("yoin-buttons"),
+        NOTICES_CLASS => Some("yoin-notices"),
+        _ => None,
+    }
+}
+
+pub fn window_attributes(attributes: winit::window::WindowAttributes) -> winit::window::WindowAttributes {
+    let attributes = attributes.with_transparent(true);
+    INITIAL_CLASS.with(|class| match panel_title(class.get()) {
+        Some(title) => attributes.with_title(title).with_decorations(false).with_resizable(false),
+        None => attributes,
+    })
+}
+
+pub fn new_panel<T: ComponentHandle>(class: &'static str, create: impl FnOnce() -> Result<T, slint::PlatformError>) -> Result<T, slint::PlatformError> {
+    let _initial = InitialClassGuard::new(class);
+    let component = create()?;
+    // Force the adapter's attribute hook while the panel role is in scope.
+    let _ = component.window();
+    Ok(component)
 }
 
 #[derive(Clone, Default)]
@@ -74,7 +116,15 @@ impl Visibility {
             *frame.borrow_mut() = Some(rendered);
             let shown = match component.show() {
                 Ok(()) => match component.window().winit_window().await {
-                    Ok(_) => true,
+                    Ok(window) => {
+                        // Slint restores default attributes when recreating a Wayland window.
+                        if let Some(title) = panel_title(class) {
+                            window.set_title(title);
+                            window.set_decorations(false);
+                            window.set_resizable(false);
+                        }
+                        true
+                    },
                     Err(error) => {
                         eprintln!("yoin: window: {error}");
                         false
@@ -112,6 +162,22 @@ impl Visibility {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cold_panel_attributes_are_frameless_without_affecting_settings() {
+        for (class, title) in [(POPUP_CLASS, "yoin-buttons"), (NOTICES_CLASS, "yoin-notices")] {
+            let _initial = InitialClassGuard::new(class);
+            let attributes = window_attributes(winit::window::WindowAttributes::default());
+            assert!(!attributes.decorations);
+            assert!(!attributes.resizable);
+            assert!(attributes.transparent);
+            assert_eq!(attributes.title, title);
+        }
+        let settings = window_attributes(winit::window::WindowAttributes::default().with_title("yoin"));
+        assert!(settings.decorations);
+        assert!(settings.resizable);
+        assert_eq!(settings.title, "yoin");
+    }
 
     #[tokio::test]
     async fn cancel_unblocks_a_window_waiting_for_its_first_frame() {
