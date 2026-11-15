@@ -133,6 +133,59 @@ component ToolButton inherits Rectangle {
     }
 }
 
+component TokenEdit inherits Rectangle {
+    in-out property <string> text;
+    in property <string> placeholder;
+    in property <string> show-label;
+    in property <string> hide-label;
+    private property <bool> revealed: false;
+    private property <bool> focused: input.has-focus;
+    changed focused => { if !self.focused { self.revealed = false; } }
+    min-width: mask.min-width;
+    min-height: mask.min-height;
+    preferred-height: mask.preferred-height;
+    vertical-stretch: 0;
+    forward-focus: input;
+    mask := LineEdit {
+        width: parent.width; height: parent.height;
+        text: root.text == "" ? "" : "*****";
+        placeholder-text: root.placeholder;
+        read-only: true;
+        enabled: false;
+        opacity: 1;
+        accessible-role: none;
+    }
+    // Keep the real editor intact; only its rendering is replaced while hidden.
+    input := LineEdit {
+        width: parent.width; height: parent.height;
+        text <=> root.text;
+        placeholder-text: root.placeholder;
+        input-type: root.revealed ? InputType.text : InputType.password;
+        opacity: root.revealed ? 1 : 0;
+    }
+    if !root.revealed && root.focused: Rectangle {
+        width: parent.width; height: parent.height;
+        background: transparent;
+        border-radius: Breeze.radius;
+        border-width: 1px; border-color: Breeze.outline;
+    }
+    if root.text != "": ToolButton {
+        x: parent.width - self.width - 2px;
+        y: (parent.height - self.height) / 2;
+        width: 28px; height: parent.height - 4px;
+        background: Breeze.button;
+        label: root.revealed ? root.hide-label : root.show-label;
+        clicked => { root.revealed = !root.revealed; input.focus(); }
+        Path {
+            width: 16px; height: 16px;
+            viewbox-width: 16; viewbox-height: 16;
+            stroke: Breeze.fg; stroke-width: 1.2px; fill: transparent;
+            commands: root.revealed ? "M 1 8 Q 8 -2 15 8 Q 8 18 1 8 Z M 6 8 A 2 2 0 1 0 10 8 A 2 2 0 1 0 6 8 M 2 2 L 14 14"
+                : "M 1 8 Q 8 -2 15 8 Q 8 18 1 8 Z M 6 8 A 2 2 0 1 0 10 8 A 2 2 0 1 0 6 8";
+        }
+    }
+}
+
 component BreezeIcon inherits Rectangle {
     in property <image> source;
     in property <bool> tint: true;
@@ -346,7 +399,7 @@ export component Popup inherits Window {
     in-out property <bool> pinned: false;
     in-out property <length> button-size: 40px;
     in-out property <length> icon-size: root.tiles ? Math.min(root.tile * 0.5, Math.max(16px, root.tile * 0.32) * 1.4) : Math.min(root.button-size - 12px, Math.min(20px, root.button-size * 0.46) * 1.4);
-    in-out property <int> tile-content-offset: 0;
+    in-out property <int> tile-content-offset: -6;
     in-out property <length> slide: 0px;
     in-out property <string> ui-font-family: "Noto Sans";
     in-out property <length> ui-font-size: 13.333px;
@@ -810,7 +863,7 @@ export component Settings inherits Window {
     in-out property <int> settings-height: 630;
     in-out property <int> logo-size: 100;
     in-out property <int> button-icon-scale: 140;
-    in-out property <int> tile-content-offset: 0;
+    in-out property <int> tile-content-offset: -6;
     in-out property <string> t-tile-content-offset;
     in-out property <string> t-tile-content-hint;
     in-out property <string> t-button-icon-scale;
@@ -844,6 +897,8 @@ export component Settings inherits Window {
     in-out property <string> t-address;
     in-out property <string> t-token;
     in-out property <string> t-token-hint;
+    in-out property <string> t-show-token;
+    in-out property <string> t-hide-token;
     in-out property <string> t-device;
     in-out property <string> t-device-hint;
     in-out property <string> t-autostart;
@@ -853,9 +908,7 @@ export component Settings inherits Window {
     in-out property <string> t-theme;
     in-out property <string> t-layout;
     in-out property <string> t-size;
-    in-out property <string> t-size-hint;
     in-out property <string> t-notices;
-    in-out property <string> t-notices-hint;
     in-out property <string> t-rename;
     in-out property <string> t-about;
     in-out property <string> t-repository;
@@ -993,10 +1046,11 @@ export component Settings inherits Window {
                         placeholder-text: "http://homeassistant.local:8123";
                     }
                     Label { text: root.t-token; }
-                    LineEdit {
+                    TokenEdit {
                         text <=> root.token;
-                        placeholder-text: root.t-token-hint;
-                        input-type: password;
+                        placeholder: root.t-token-hint;
+                        show-label: root.t-show-token;
+                        hide-label: root.t-hide-token;
                     }
                     Label { text: root.t-device; }
                     LineEdit { text <=> root.device; }
@@ -1071,11 +1125,6 @@ export component Settings inherits Window {
                     alignment: start;
                     padding: 8px;
                     spacing: 6px;
-                    CheckBox {
-                        text: root.t-autostart;
-                        checked <=> root.autostart;
-                        toggled => { root.autostart-changed(self.checked); }
-                    }
                     if root.status != "": Hint { text: root.status; }
                     Label { text: root.t-language; }
                     lang := ComboBox {
@@ -1102,7 +1151,6 @@ export component Settings inherits Window {
                         value <=> root.button-size-value;
                         changed(v) => { root.size-changed(v); }
                     }
-                    Hint { text: root.t-size-hint; }
                     Label { text: root.t-notices + ": " + Math.round(root.notice-limit-value); }
                     notes := SizeSlider {
                         minimum: 0;
@@ -1110,7 +1158,11 @@ export component Settings inherits Window {
                         value <=> root.notice-limit-value;
                         changed(v) => { root.notice-limit(Math.round(v)); }
                     }
-                    Hint { text: root.t-notices-hint; }
+                    CheckBox {
+                        text: root.t-autostart;
+                        checked <=> root.autostart;
+                        toggled => { root.autostart-changed(self.checked); }
+                    }
                     Button {
                         text: root.t-reset;
                         clicked => { root.reset-general(); }

@@ -1445,6 +1445,8 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_address(cat.tr(3).into());
     settings.set_t_token(cat.tr(4).into());
     settings.set_t_token_hint(cat.tr(25).into());
+    settings.set_t_show_token(cat.tr(108).into());
+    settings.set_t_hide_token(cat.tr(109).into());
     settings.set_t_device(cat.tr(5).into());
     settings.set_t_device_hint(cat.tr(6).into());
     settings.set_t_autostart(cat.tr(7).into());
@@ -1454,9 +1456,7 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_theme(cat.tr(14).into());
     settings.set_t_layout(cat.tr(34).into());
     settings.set_t_size(cat.tr(37).into());
-    settings.set_t_size_hint(cat.tr(39).into());
     settings.set_t_notices(cat.tr(57).into());
-    settings.set_t_notices_hint(cat.tr(58).into());
     settings.set_t_rename(cat.tr(38).into());
     settings.set_t_about(cat.tr(51).into());
     settings.set_t_repository(cat.tr(53).into());

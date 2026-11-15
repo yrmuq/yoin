@@ -13,7 +13,7 @@ pub const DEFAULT_SETTINGS_WIDTH: u32 = 600;
 pub const DEFAULT_SETTINGS_HEIGHT: u32 = 630;
 pub const DEFAULT_LOGO_SIZE: u32 = 100;
 pub const DEFAULT_BUTTON_ICON_SCALE: u32 = 140;
-pub const DEFAULT_TILE_CONTENT_OFFSET: i32 = 0;
+pub const DEFAULT_TILE_CONTENT_OFFSET: i32 = -6;
 const AUTOSTART_NAME: &str = "io.github.yrmuq.yoin.desktop";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(cfg.layout, "list");
         assert_eq!(cfg.button_size, 40);
         assert_eq!(cfg.button_icon_scale, 140);
-        assert_eq!(cfg.tile_content_offset, 0);
+        assert_eq!(cfg.tile_content_offset, -6);
         assert!(!cfg.notices_hidden);
         assert_eq!(cfg.notice_limit, 3);
         assert_eq!(cfg.labels, vec![String::new()]);
