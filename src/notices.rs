@@ -5,17 +5,15 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::config;
 use crate::i18n::Catalog;
 
-pub const LIMIT: usize = 3;
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Note {
+    pub id: String,
     pub title: String,
     pub message: String,
     pub at: i64,
@@ -65,13 +63,25 @@ pub fn save(notes: &[Note]) {
     }
 }
 
-/// Keeps the newest three. Returns image files that are no longer used.
-pub fn push(notes: &mut Vec<Note>, note: Note) -> Vec<String> {
+/// Keeps the newest `limit` notices. Zero drops every notice, including the
+/// one just received. Returns image files that are no longer used.
+pub fn push(notes: &mut Vec<Note>, note: Note, limit: usize) -> Vec<String> {
+    if limit == 0 {
+        let mut dropped = trim(notes, 0);
+        if !note.image.is_empty() {
+            dropped.push(note.image);
+        }
+        return dropped;
+    }
     notes.push(note);
-    if notes.len() <= LIMIT {
+    trim(notes, limit)
+}
+
+pub fn trim(notes: &mut Vec<Note>, limit: usize) -> Vec<String> {
+    if notes.len() <= limit {
         return Vec::new();
     }
-    let extra = notes.len() - LIMIT;
+    let extra = notes.len() - limit;
     let dropped: Vec<Note> = notes.drain(0..extra).collect();
     dropped.into_iter().map(|note| note.image).filter(|path| !path.is_empty()).collect()
 }
@@ -93,8 +103,8 @@ pub fn dismiss(notes: &mut Vec<Note>, index: usize) -> Option<String> {
     Some(notes.remove(index).image)
 }
 
-pub fn attach(notes: &mut [Note], at: i64, image: String) -> bool {
-    let Some(note) = notes.iter_mut().find(|note| note.at == at) else { return false };
+pub fn attach(notes: &mut [Note], id: &str, image: String) -> bool {
+    let Some(note) = notes.iter_mut().find(|note| note.id == id) else { return false };
     note.image = image;
     true
 }
@@ -109,8 +119,8 @@ pub fn keep_shot(source: &Path) -> Option<String> {
     }
     let dir = shots_dir();
     fs::create_dir_all(&dir).ok()?;
-    let stamp = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis();
-    let dest = dir.join(format!("shot-{stamp}.{ext}"));
+    let id = uuid::Uuid::new_v4().simple();
+    let dest = dir.join(format!("shot-{id}.{ext}"));
     fs::copy(source, &dest).ok()?;
     Some(dest.display().to_string())
 }
@@ -157,6 +167,7 @@ fn plural_form(language: &str, n: u64) -> usize {
 fn from_stored(row: Stored) -> Note {
     let image = shot_file(&row.image);
     Note {
+        id: uuid::Uuid::new_v4().simple().to_string(),
         title: row.title,
         message: row.message,
         at: row.at,
@@ -207,6 +218,22 @@ fn days_from_civil(year: i32, month: i32, day: i32) -> i64 {
 mod tests {
     use super::*;
 
+    #[test]
+    fn pictures_follow_ids_even_when_notices_arrive_in_the_same_second() {
+        let stored = || Stored { title: "Door".into(), message: String::new(), at: 123, image: String::new() };
+        let mut notes = vec![from_stored(stored()), from_stored(stored())];
+        let first = notes[0].id.clone();
+        let second = notes[1].id.clone();
+        assert_ne!(first, second);
+        assert!(attach(&mut notes, &second, "second.png".into()));
+        assert!(attach(&mut notes, &first, "first.png".into()));
+        assert_eq!(notes[0].image, "first.png");
+        assert_eq!(notes[1].image, "second.png");
+        dismiss(&mut notes, 0);
+        assert!(!attach(&mut notes, &first, "late.png".into()));
+        assert_eq!(notes[0].image, "second.png");
+    }
+
     fn catalog() -> Catalog {
         Catalog::load(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("languages"), "Russian")
     }
@@ -240,13 +267,14 @@ mod tests {
             let mut dropped = Vec::new();
             for n in 0..4 {
                 dropped.extend(push(&mut notes, Note {
+                    id: uuid::Uuid::new_v4().simple().to_string(),
                     title: n.to_string(),
                     message: String::new(),
                     at: n,
                     image: if n == 0 { "old.jpg".into() } else { String::new() },
                     fade: 1.0,
                     closing: false,
-                }));
+                }, 3));
             }
         assert_eq!(notes.len(), 3);
         assert_eq!(notes[0].title, "1");
@@ -254,10 +282,18 @@ mod tests {
     }
 
     #[test]
+    fn zero_keeps_no_notices() {
+        let mut notes = vec![Note { id: uuid::Uuid::new_v4().simple().to_string(), title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into(), fade: 1.0, closing: false }];
+        let dropped = push(&mut notes, Note { id: uuid::Uuid::new_v4().simple().to_string(), title: "b".into(), message: String::new(), at: 2, image: String::new(), fade: 1.0, closing: false }, 0);
+        assert!(notes.is_empty());
+        assert_eq!(dropped, vec!["a.jpg".to_string()]);
+    }
+
+    #[test]
     fn dismiss_removes_that_notice_only() {
         let mut notes = vec![
-            Note { title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into(), fade: 1.0, closing: false },
-            Note { title: "b".into(), message: String::new(), at: 2, image: String::new(), fade: 1.0, closing: false },
+            Note { id: uuid::Uuid::new_v4().simple().to_string(), title: "a".into(), message: String::new(), at: 1, image: "a.jpg".into(), fade: 1.0, closing: false },
+            Note { id: uuid::Uuid::new_v4().simple().to_string(), title: "b".into(), message: String::new(), at: 2, image: String::new(), fade: 1.0, closing: false },
         ];
         assert_eq!(dismiss(&mut notes, 0).as_deref(), Some("a.jpg"));
         assert_eq!(notes.len(), 1);

@@ -4,14 +4,4 @@
 set -eu
 export YOIN_ASSETS="${YOIN_ASSETS:-/app/share/yoin/assets}"
 export YOIN_LANGUAGES="${YOIN_LANGUAGES:-/app/share/yoin/languages}"
-export PYTHONPATH="/app/share/yoin${PYTHONPATH:+:$PYTHONPATH}"
-export PYTHONNOUSERSITE=1
-export PYTHONDONTWRITEBYTECODE=1
-SITE="/app/python/lib/python3.12/site-packages/PySide6/Qt"
-if [ -d "$SITE/plugins" ]; then
-    export QT_PLUGIN_PATH="$SITE/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
-fi
-if [ -d "$SITE/lib" ]; then
-    export LD_LIBRARY_PATH="$SITE/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-fi
-exec /app/python/bin/python3 -m yoin "$@"
+exec /app/bin/yoin-bin "$@"

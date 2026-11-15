@@ -3,8 +3,18 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const SCRIPT: &str = include_str!("../kwin/placer.js");
+
+struct RuleReload(tokio::sync::mpsc::UnboundedSender<()>);
+
+#[zbus::interface(name = "io.github.yrmuq.yoin.Placer")]
+impl RuleReload {
+    fn ready(&self) {
+        let _ = self.0.send(());
+    }
+}
 
 pub async fn install() -> bool {
     let cache = std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".cache"));
@@ -13,14 +23,20 @@ pub async fn install() -> bool {
         return false;
     }
     let path = folder.join("placer.js");
-    if fs::write(&path, SCRIPT).is_err() {
-        return false;
-    }
     let Ok(conn) = zbus::Connection::session().await else { return false };
     stop_saved(&conn, &folder.join("placer.id")).await;
-    let rules_changed = write_taskbar_rule();
-    if rules_changed {
-        let _ = conn.call_method(Some("org.kde.KWin"), "/KWin", Some("org.kde.KWin"), "reconfigure", &()).await;
+    if !write_taskbar_rule() {
+        return false;
+    }
+    let (ready, mut reloaded) = tokio::sync::mpsc::unbounded_channel();
+    if conn.object_server().at("/yoin/Placer", RuleReload(ready)).await.is_err() {
+        return false;
+    }
+    let Some(destination) = conn.unique_name() else { return false };
+    let destination = serde_json::to_string(destination.as_str()).unwrap();
+    let script = format!("const yoinReadyBus = {destination};\n{SCRIPT}");
+    if fs::write(&path, script).is_err() {
+        return false;
     }
     let reply = conn
         .call_method(
@@ -38,7 +54,14 @@ pub async fn install() -> bool {
     if ran {
         let _ = fs::write(folder.join("placer.id"), id.to_string());
     }
-    ran
+    if !ran || conn.call_method(Some("org.kde.KWin"), "/KWin", Some("org.kde.KWin"), "reconfigure", &()).await.is_err() {
+        return false;
+    }
+    if tokio::time::timeout(Duration::from_secs(5), reloaded.recv()).await.ok().flatten().is_none() {
+        return false;
+    }
+    // The signal precedes rule loading; a round trip waits for that dispatch to finish.
+    conn.call_method(Some("org.kde.KWin"), "/KWin", Some("org.kde.KWin"), "supportInformation", &()).await.is_ok()
 }
 
 async fn stop_saved(conn: &zbus::Connection, path: &std::path::Path) {
@@ -57,19 +80,20 @@ skippager=true
 skippagerrule=2
 skipswitcher=true
 skipswitcherrule=2
-title=yoin-(buttons|notices)
-titlematch=3
-wmclass=yoin
-wmclassmatch=1
+wmclass=^yoin-popup(-buttons|-notices)?$
+wmclassmatch=3
 wmclasscomplete=false
+noborder=true
+noborderrule=2
 ";
 
 /// KWin applies window rules while the window is created, before the task
-/// manager can show an icon. Returns true when the file changed.
+/// manager can show an icon. Returns true when the rule is ready on disk.
 fn write_taskbar_rule() -> bool {
-    let path = crate::config::home().join(".config").join("kwinrulesrc");
+    let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).unwrap_or_else(|| crate::config::home().join(".config"));
+    let path = base.join("kwinrulesrc");
     let previous = fs::read_to_string(&path).unwrap_or_default();
-    let Some(next) = merge_kwin_rules(&previous) else { return false };
+    let Some(next) = merge_kwin_rules(&previous) else { return true };
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -107,7 +131,7 @@ fn rewrite_tray_rule(text: &str) -> String {
 }
 fn merge_kwin_rules(text: &str) -> Option<String> {
     if text.contains("[yoin-tray]") {
-        if text.contains("title=yoin-(buttons|notices)\n") && text.contains("titlematch=3\n") {
+        if tray_rule_current(text) {
             return None;
         }
         return Some(rewrite_tray_rule(text));
@@ -167,6 +191,21 @@ fn merge_kwin_rules(text: &str) -> Option<String> {
     Some(out)
 }
 
+/// The title is applied after Wayland maps the window, so a title match lets
+/// the task manager draw an icon first. The popup class is set before that.
+fn tray_rule_current(text: &str) -> bool {
+    let Some(start) = text.find("[yoin-tray]") else { return false };
+    let after = &text[start + "[yoin-tray]".len()..];
+    let end = after.find("\n[").unwrap_or(after.len());
+    let section = &after[..end];
+    section.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n")
+        && section.contains("wmclassmatch=3\n")
+        && section.contains("skiptaskbarrule=2\n")
+        && section.contains("noborder=true\n")
+        && section.contains("noborderrule=2\n")
+        && !section.contains("title=")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,19 +216,28 @@ mod tests {
         assert!(first.contains("rules=1,yoin-tray\n"));
         assert!(first.contains("count=2\n"));
         assert!(first.contains("skiptaskbar=true\n"));
-        assert!(first.contains("title=yoin-(buttons|notices)\n"));
-        assert!(first.contains("titlematch=3\n"));
+        assert!(first.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
+        assert!(first.contains("wmclassmatch=3\n"));
+        assert!(!first.contains("title="));
+        assert!(first.contains("noborder=true\n"));
+        assert!(first.contains("noborderrule=2\n"));
         assert!(merge_kwin_rules(&first).is_none());
         let stale = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin\nskiptaskbar=true\n";
         let updated = merge_kwin_rules(stale).unwrap();
-        assert!(updated.contains("title=yoin-(buttons|notices)\n"));
+        assert!(updated.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
+        assert!(!updated.contains("title="));
         assert!(!updated.contains("Description=yoin tray windows\n"));
         assert!(merge_kwin_rules(&updated).is_none());
-        let old = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nDescription=yoin tray popup\ntitle=yoin-buttons\ntitlematch=1\nwmclass=yoin\n";
+        let old = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nDescription=yoin tray popup\ntitle=yoin-(buttons|notices)\ntitlematch=3\nwmclass=yoin\nwmclassmatch=1\n";
         let fixed = merge_kwin_rules(old).unwrap();
-        assert!(fixed.contains("title=yoin-(buttons|notices)\n"));
-        assert!(!fixed.contains("title=yoin-buttons\n"));
+        assert!(fixed.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
+        assert!(!fixed.contains("title="));
         assert!(merge_kwin_rules(&fixed).is_none());
+        let previous = "[General]\nrules=yoin-tray\ncount=1\n\n[yoin-tray]\nwmclass=yoin-popup\nwmclassmatch=1\nskiptaskbarrule=2\n";
+        let updated = merge_kwin_rules(previous).unwrap();
+        assert!(updated.contains("wmclass=^yoin-popup(-buttons|-notices)?$\n"));
+        assert!(updated.contains("noborderrule=2\n"));
+        assert!(merge_kwin_rules(&updated).is_none());
         let empty = merge_kwin_rules("").unwrap();
         assert!(empty.contains("[yoin-tray]\n"));
         assert!(empty.contains("rules=yoin-tray\n"));

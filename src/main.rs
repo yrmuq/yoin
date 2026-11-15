@@ -11,6 +11,7 @@ mod notify;
 mod place;
 mod theme;
 mod tray;
+mod windows;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -22,13 +23,14 @@ use std::time::{Duration, Instant};
 use std::sync::{Arc, Mutex};
 
 use slint::winit_030::{winit, EventResult, WinitWindowAccessor};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 use crate::client::{ClientCmd, ClientEv, Session};
 use crate::config::Config;
 use crate::ha::Entity;
 use crate::i18n::Catalog;
 use crate::tray::{TrayCmd, TrayView, YoinTray};
+use crate::windows::{POPUP_CLASS, NOTICES_CLASS};
 
 slint::include_modules!();
 
@@ -48,21 +50,27 @@ struct App {
     blur_at: Instant,
     pinned: bool,
     editing: Option<usize>,
+    editor_ids: Vec<String>,
     popup_at: Instant,
     placer_ok: bool,
     place_warned: bool,
     status: String,
+    connection: u32,
     notes: Vec<notices::Note>,
 }
 
 struct Shell {
     settings: Option<Settings>,
+    settings_visibility: windows::Visibility,
+    popup_visibility: windows::Visibility,
+    notices_visibility: windows::Visibility,
     popup: Option<Popup>,
     slide_timer: Option<Rc<slint::Timer>>,
     notice_slide: Option<Rc<slint::Timer>>,
     raise_timer: Option<slint::Timer>,
     notice_timer: Option<Rc<slint::Timer>>,
     notices: Option<Notices>,
+    notices_creating: bool,
 }
 
 struct Ctx {
@@ -82,14 +90,15 @@ fn main() {
     if let Err(err) = slint::BackendSelector::new()
         .backend_name("winit".into())
         .renderer_name("femtovg".into())
-        .with_winit_window_attributes_hook(|attributes| attributes.with_transparent(true))
+        .with_winit_window_attributes_hook(windows::window_attributes)
         .select()
     {
         eprintln!("yoin: graphics: {err}");
         return;
     }
-    // Wayland reports this as the window class. The tray popup is kept off
-    // the taskbar. The settings window is not.
+    // Wayland reports this as the window class. Settings stay "yoin" so they
+    // remain on the taskbar. The tray windows use yoin-popup-* classes, set before the
+    // window is mapped, because the caption arrives one frame later.
     let _ = slint::set_xdg_app_id("yoin");
     let mut cfg = config::load_config(&config::config_path());
     let folder = i18n::language_dir();
@@ -125,6 +134,7 @@ fn main() {
             .expect("tray");
         (Arc::new(handle), placer_ok)
     });
+    let notes = loaded_notes(cfg.notice_limit);
     let ctx = Rc::new(Ctx {
         app: Rc::new(RefCell::new(App {
             cfg,
@@ -140,20 +150,26 @@ fn main() {
             blur_at: Instant::now(),
             pinned: false,
             editing: None,
+            editor_ids: Vec::new(),
             popup_at: Instant::now(),
             placer_ok,
             place_warned: false,
             status: String::new(),
-            notes: notices::load(),
+            connection: 26,
+            notes,
         })),
         shell: Rc::new(RefCell::new(Shell {
             settings: None,
+            settings_visibility: windows::Visibility::default(),
+            popup_visibility: windows::Visibility::default(),
+            notices_visibility: windows::Visibility::default(),
             popup: None,
             slide_timer: None,
             notice_slide: None,
             raise_timer: None,
             notice_timer: None,
             notices: None,
+            notices_creating: false,
         })),
         client_tx: client_tx.clone(),
         view: view.clone(),
@@ -165,8 +181,7 @@ fn main() {
         let _ = config::apply_autostart(true, &config::autostart_path());
     }
     if ctx.app.borrow().cfg.url.is_empty() || ctx.app.borrow().cfg.token.is_empty() {
-        let settings = ensure_settings(&ctx);
-        present_settings(&ctx, &settings);
+        open_settings(&ctx);
     } else {
         start_client(&ctx.app, &ctx.client_tx);
     }
@@ -180,8 +195,7 @@ fn main() {
         while let Ok(cmd) = tray_rx.try_recv() {
             match cmd {
                 TrayCmd::Settings => {
-                    let settings = ensure_settings(&ctx_timer);
-                    present_settings(&ctx_timer, &settings);
+                    open_settings(&ctx_timer);
                 }
                 TrayCmd::Toggle => toggles += 1,
             }
@@ -221,6 +235,9 @@ fn main() {
                 }
                 ClientEv::State(entity) => {
                     ctx_timer.app.borrow_mut().entities.insert(entity.entity_id.clone(), entity.clone());
+                    if let Some(settings) = settings_of(&ctx_timer.shell) {
+                        fill_rows(&ctx_timer.app, &settings);
+                    }
                     if let Some(slot) = ctx_timer.app.borrow_mut().names.iter_mut().find(|item| item.entity_id == entity.entity_id) {
                         *slot = entity;
                     }
@@ -230,18 +247,21 @@ fn main() {
                 }
                 ClientEv::Notify { title, message, image } => {
                     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+                    let id = uuid::Uuid::new_v4().simple().to_string();
                     let open = ctx_timer.app.borrow().popup_open;
                     let notes_up = notices_of(&ctx_timer.shell).is_some_and(|notes| notes.window().is_visible());
+                    let limit = ctx_timer.app.borrow().cfg.notice_limit as usize;
                     {
                         let mut app = ctx_timer.app.borrow_mut();
                         let dropped = notices::push(&mut app.notes, notices::Note {
+                            id: id.clone(),
                             title: title.clone(),
                             message: message.clone(),
                             at,
                             image: String::new(),
                             fade: if open && notes_up { 0.0 } else { 1.0 },
                             closing: false,
-                        });
+                        }, limit);
                         notices::forget(&dropped);
                         notices::save(&app.notes);
                     }
@@ -261,18 +281,22 @@ fn main() {
                             Some(image) => notify::fetch_image(&base, &token, &image).await,
                             None => None,
                         };
-                        let stored = photo.as_deref().and_then(|path| notices::keep_shot(std::path::Path::new(path)));
+                        let stored = if limit > 0 {
+                            photo.as_deref().and_then(|path| notices::keep_shot(std::path::Path::new(path)))
+                        } else {
+                            None
+                        };
                         if let Some(path) = stored.clone() {
-                            let _ = back.send(ClientEv::Shot { at, path });
+                            let _ = back.send(ClientEv::Shot { id, path });
                         }
                         let shown = stored.as_deref().or(photo.as_deref());
                         notify::announce(&title, &message, &icon, shown).await;
                     });
                 }
-                ClientEv::Shot { at, path } => {
+                ClientEv::Shot { id, path } => {
                     let kept = {
                         let mut app = ctx_timer.app.borrow_mut();
-                        if notices::attach(&mut app.notes, at, path.clone()) {
+                        if notices::attach(&mut app.notes, &id, path.clone()) {
                             notices::save(&app.notes);
                             true
                         } else {
@@ -287,10 +311,12 @@ fn main() {
                         notices::forget(&[path]);
                     }
                 }
-                ClientEv::Linked(up) => {
-                    let id = if up { 22 } else { 24 };
-                    let text = ctx_timer.app.borrow().catalog.tr(id);
-                    note_status(&ctx_timer, text);
+                ClientEv::Connection(id) => {
+                    ctx_timer.app.borrow_mut().connection = id;
+                    if id == 21 { note_status(&ctx_timer, String::new()); }
+                    if let Some(settings) = settings_of(&ctx_timer.shell) {
+                        fill_connection(&ctx_timer.app.borrow(), &settings);
+                    }
                 }
             }
         }
@@ -368,7 +394,7 @@ fn notices_of(shell: &RefCell<Shell>) -> Option<Notices> {
 fn hide_notices(shell: &RefCell<Shell>) {
     let Some(notices) = notices_of(shell) else { return };
     let was_open = notices.window().is_visible();
-    notices.hide().ok();
+    shell.borrow().notices_visibility.hide(&notices);
     if !was_open {
         return;
     }
@@ -393,6 +419,11 @@ fn window_focused(window: &slint::Window) -> bool {
     window.with_winit_window(|winit| winit.has_focus()).unwrap_or(false)
 }
 
+fn fill_connection(app: &App, settings: &Settings) {
+    settings.set_connection_state(app.connection as i32);
+    settings.set_connection_status(app.catalog.tr(app.connection).into());
+}
+
 fn note_status(ctx: &Ctx, text: String) {
     ctx.app.borrow_mut().status = text.clone();
     if let Some(settings) = settings_of(&ctx.shell) {
@@ -407,12 +438,55 @@ fn paint_theme(ctx: &Ctx) {
     apply_theme(&ctx.app, settings.as_ref(), popup.as_ref(), notices.as_ref(), &ctx.view, &ctx.tray, &ctx.rt);
 }
 
-fn ensure_settings(ctx: &Ctx) -> Settings {
+fn open_settings(ctx: &Ctx) {
+    if let Some(settings) = settings_of(&ctx.shell) {
+        present_settings(ctx, &settings);
+        return;
+    }
+    let ctx = ctx_from(ctx);
+    let _ = slint::spawn_local(async move {
+        windows::create("yoin", || {
+            if settings_of(&ctx.shell).is_some() { None } else { Some(build_settings(&ctx)) }
+        }).await;
+        if let Some(settings) = settings_of(&ctx.shell) { present_settings(&ctx, &settings); }
+    });
+}
+
+fn build_settings(ctx: &Ctx) -> Settings {
     if let Some(settings) = settings_of(&ctx.shell) {
         return settings;
     }
     let settings = Settings::new().unwrap();
-    let _ = settings.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    let visibility = ctx.shell.borrow().settings_visibility.clone();
+    let settings_close = settings.as_weak();
+    let _ = settings.window().on_close_requested(move || {
+        if let Some(settings) = settings_close.upgrade() { settings.invoke_close_editor(); }
+        visibility.cancel();
+        slint::CloseRequestResponse::HideWindow
+    });
+    let resize_app = ctx.app.clone();
+    let resize_settings = settings.as_weak();
+    let settings_frames = ctx.shell.borrow().settings_visibility.clone();
+    let _ = settings.window().on_winit_window_event(move |window, event| {
+        if matches!(event, winit::event::WindowEvent::RedrawRequested) {
+            settings_frames.redraw_requested();
+        }
+        if let winit::event::WindowEvent::Resized(size) = event {
+            let Some(settings) = resize_settings.upgrade() else { return EventResult::Propagate };
+            if window.is_visible() {
+                let size = size.to_logical::<u32>(window.scale_factor() as f64);
+                let mut app = resize_app.borrow_mut();
+                if config::record_window_size(&mut app.cfg, size.width, size.height) {
+                    let _ = config::save_config(&app.cfg, &config::config_path());
+                    let (width, height) = (app.cfg.settings_width, app.cfg.settings_height);
+                    drop(app);
+                    settings.set_settings_width(width as i32);
+                    settings.set_settings_height(height as i32);
+                }
+            }
+        }
+        EventResult::Propagate
+    });
     ctx.shell.borrow_mut().settings = Some(settings.clone_strong());
     paint_theme(ctx);
     fill_text(&ctx.app, &settings);
@@ -421,25 +495,36 @@ fn ensure_settings(ctx: &Ctx) -> Settings {
         settings.set_status(ctx.app.borrow().status.clone().into());
     }
     wire_settings(ctx, &settings);
-    lock_settings(&settings);
+    apply_metrics(&settings, &ctx.app.borrow().cfg);
     settings
 }
 
-fn ensure_popup(ctx: &Ctx) -> Popup {
+fn build_popup(ctx: &Ctx) -> Popup {
     if let Some(popup) = popup_of(&ctx.shell) {
         return popup;
     }
-    let popup = Popup::new().unwrap();
-    let _ = popup.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
+    let popup = windows::new_panel(POPUP_CLASS, Popup::new).unwrap();
+    let visibility = ctx.shell.borrow().popup_visibility.clone();
+    let _ = popup.window().on_close_requested(move || {
+        visibility.cancel();
+        slint::CloseRequestResponse::HideWindow
+    });
     let weak = popup.as_weak();
     let focus = ctx_from(ctx);
+    let frames = ctx.shell.borrow().popup_visibility.clone();
     let _ = popup.window().on_winit_window_event(move |_window, event| {
         match event {
-            winit::event::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                if let Some(popup) = weak.upgrade() {
-                    sharpen_popup(&popup);
-                    refresh_popup_at(&focus.app, &focus.shell, *scale_factor as f32);
-                }
+            winit::event::WindowEvent::RedrawRequested => frames.redraw_requested(),
+            winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                let weak = weak.clone();
+                let focus = ctx_from(&focus);
+                // The event hook runs before Slint has applied the new scale factor.
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(popup) = weak.upgrade() {
+                        sharpen_popup(&popup);
+                        refresh_popup(&focus.app, &focus.shell);
+                    }
+                });
             }
             winit::event::WindowEvent::Focused(true) => {
                 let mut app = focus.app.borrow_mut();
@@ -477,6 +562,7 @@ fn ensure_popup(ctx: &Ctx) -> Popup {
     paint_theme(ctx);
     refresh_popup(&ctx.app, &ctx.shell);
     wire_popup(ctx, &popup);
+    popup.set_slide(popup.get_layout_height());
     popup
 }
 
@@ -513,7 +599,7 @@ fn hide_popup(ctx: &Ctx) {
         return;
     };
     if !ctx.app.borrow().popup_open {
-        popup.hide().ok();
+        ctx.shell.borrow().popup_visibility.hide(&popup);
         finish_hide(ctx, None);
         return;
     }
@@ -580,7 +666,7 @@ fn slide_closed(ctx: &Ctx, popup: &Popup) {
 fn finish_hide(ctx: &Ctx, popup: Option<&Popup>) {
     hide_notices(&ctx.shell);
     if let Some(popup) = popup {
-        popup.hide().ok();
+        ctx.shell.borrow().popup_visibility.hide(popup);
     }
     let mut app = ctx.app.borrow_mut();
     app.popup_open = false;
@@ -619,18 +705,8 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
         let ease = 1.0 - (1.0 - t).powi(3);
         let left = 1.0 - ease;
         popup.set_slide(height * left);
-        if let Some(notes) = notices_of(&shell) {
-            if notes.window().is_visible() && !popup.get_notices_hidden() {
-                notes.set_slide(notes.get_notice_h().max(0.0) * left);
-            }
-        }
         if t >= 1.0 {
             popup.set_slide(0.0);
-            if let Some(notes) = notices_of(&shell) {
-                if !popup.get_notices_hidden() {
-                    notes.set_slide(0.0);
-                }
-            }
             tick.stop();
             shell.borrow_mut().slide_timer = None;
         }
@@ -640,7 +716,7 @@ fn start_slide(ctx: &Ctx, popup: &Popup) {
 
 fn present_settings(ctx: &Ctx, settings: &Settings) {
     dismiss_popup_if_loose(ctx);
-    settings.show().ok();
+    ctx.shell.borrow().settings_visibility.show(settings, "yoin");
     let _ = settings.window().with_winit_window(|window| {
         let scale = window.scale_factor() as f32;
         if scale.is_finite() && scale > 0.0 {
@@ -663,9 +739,29 @@ fn present_settings(ctx: &Ctx, settings: &Settings) {
     ctx.shell.borrow_mut().raise_timer = Some(kick);
 }
 
-fn lock_settings(settings: &Settings) {
+fn apply_metrics(settings: &Settings, cfg: &Config) {
+    settings.set_settings_width(cfg.settings_width as i32);
+    settings.set_settings_height(cfg.settings_height as i32);
+    settings.set_logo_size(cfg.logo_size as i32);
+    settings.set_button_icon_scale(cfg.button_icon_scale as i32);
+    settings.set_tile_content_offset(cfg.tile_content_offset);
+    settings.set_lock_window_size(cfg.lock_window_size);
+    settings.set_dev_open(cfg.dev_tab);
     let _ = settings.window().with_winit_window(|window| {
-        window.set_resizable(false);
+        window.set_min_inner_size(None::<winit::dpi::LogicalSize<f64>>);
+        window.set_max_inner_size(None::<winit::dpi::LogicalSize<f64>>);
+        window.set_resizable(!cfg.lock_window_size);
+    });
+    settings.window().set_size(slint::LogicalSize::new(cfg.settings_width as f32, cfg.settings_height as f32));
+    let _ = settings.window().with_winit_window(|window| {
+        let (minimum, maximum) = if cfg.lock_window_size {
+            let size = winit::dpi::LogicalSize::new(cfg.settings_width, cfg.settings_height);
+            (size, size)
+        } else {
+            (winit::dpi::LogicalSize::new(360, 240), winit::dpi::LogicalSize::new(2200, 1800))
+        };
+        window.set_min_inner_size(Some(minimum));
+        window.set_max_inner_size(Some(maximum));
     });
 }
 
@@ -724,7 +820,6 @@ fn open_home(ctx: &Ctx) {
 }
 
 fn toggle_popup(ctx: &Ctx) -> bool {
-    let popup = ensure_popup(ctx);
     if ctx.app.borrow().popup_open {
         hide_popup(ctx);
         return false;
@@ -737,23 +832,47 @@ fn toggle_popup(ctx: &Ctx) -> bool {
         app.close_popup = false;
         app.popup_at = Instant::now();
     }
-    refresh_popup(&ctx.app, &ctx.shell);
-    popup.set_pinned(ctx.app.borrow().pinned);
-    let height = popup.get_layout_height();
-    popup.set_slide(if height > 1.0 { height } else { 0.0 });
-    popup.show().ok();
-    let _ = popup.window().with_winit_window(|window| {
-        window.set_title("yoin-buttons");
-        window.focus_window();
+    let opening = ctx_from(ctx);
+    let _ = slint::spawn_local(async move {
+        let ctx = opening;
+        if popup_of(&ctx.shell).is_none() {
+            windows::create(POPUP_CLASS, || {
+                if popup_of(&ctx.shell).is_some() { None } else { Some(build_popup(&ctx)) }
+            }).await;
+        }
+        let Some(popup) = popup_of(&ctx.shell) else { return };
+        if !ctx.app.borrow().popup_open || ctx.app.borrow().closing { return; }
+        refresh_popup(&ctx.app, &ctx.shell);
+        popup.set_pinned(ctx.app.borrow().pinned);
+        let height = popup.get_layout_height();
+        popup.set_slide(if height > 1.0 { height } else { 0.0 });
+        let ready = ctx_from(&ctx);
+        let visibility = ctx.shell.borrow().popup_visibility.clone();
+        visibility.show_ready(&popup, POPUP_CLASS, move |popup| {
+            if !ready.app.borrow().popup_open || ready.app.borrow().closing { return; }
+            ready.app.borrow_mut().popup_at = Instant::now();
+            let _ = popup.window().with_winit_window(|window| {
+                window.focus_window();
+            });
+            sharpen_popup(&popup);
+            size_panel(popup.window(), popup.get_layout_width(), popup.get_layout_height());
+            sync_notices(&ready.app, &ready.shell);
+            start_slide(&ready, &popup);
+        });
     });
-    sharpen_popup(&popup);
-    start_slide(ctx, &popup);
     if !ctx.app.borrow().placer_ok && !ctx.app.borrow().place_warned {
         ctx.app.borrow_mut().place_warned = true;
         let text = ctx.app.borrow().catalog.tr(23);
         note_status(ctx, text);
     }
     true
+}
+
+fn size_panel(window: &slint::Window, width: f32, height: f32) {
+    let size = slint::LogicalSize::new(width, height);
+    if window.size() != size.to_physical(window.scale_factor()) {
+        window.set_size(size);
+    }
 }
 
 fn icon_px(logical: f32, scale: f32) -> u32 {
@@ -774,22 +893,18 @@ fn refresh_popup(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
 fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f32) {
     let Some(popup) = popup_of(shell) else { return };
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { popup_scale(&popup) };
-    let (faces, tiles, button_size, pinned, notices_hidden) = {
+    let (faces, tiles, button_size, pinned, notices_hidden, notice_limit) = {
         let app = app.borrow();
         let unset = app.catalog.tr(12);
         let tiles = app.cfg.layout == "tiles";
-        let button = app.cfg.button_size as f32;
-        let logical = if tiles {
-            (button * 2.05 * 0.32).max(16.0)
-        } else {
-            20.0_f32.min(button * 0.46)
-        };
+        let logical = config::button_icon_edge(&app.cfg);
         let edge = icon_px(logical, scale);
         let faces: Vec<Face> = app.cfg.buttons.iter().enumerate().map(|(index, id)| {
             let known = app.entities.get(id);
             let custom = app.cfg.labels.get(index).map(String::as_str).unwrap_or("");
             let on = ha::button_on(known);
-            let kind = ha::entity_kind(id, known);
+            let automatic = ha::entity_kind(id, known);
+            let kind = app.cfg.icons.get(index).filter(|kind| !kind.is_empty()).cloned().unwrap_or(automatic);
             let icon = icons::button_icon(&kind, on, edge);
             Face {
                 text: ha::tray_label(id, known, custom, &unset, tiles).into(),
@@ -800,14 +915,18 @@ fn refresh_popup_at(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, scale: f
                 icon: icon.map(|icon| icon.image).unwrap_or_default(),
             }
         }).collect();
-        (faces, tiles, app.cfg.button_size as f32, app.pinned, app.cfg.notices_hidden)
+        (faces, tiles, app.cfg.button_size as f32, app.pinned, app.cfg.notices_hidden, app.cfg.notice_limit as i32)
     };
     popup.set_tiles(tiles);
     popup.set_button_size(button_size);
+    popup.set_icon_size(config::button_icon_edge(&app.borrow().cfg));
+    popup.set_tile_content_offset(app.borrow().cfg.tile_content_offset);
     popup.set_pinned(pinned);
     popup.set_notices_hidden(notices_hidden);
+    popup.set_notice_limit(notice_limit);
     apply_header_icons(&popup);
     popup.set_faces(ModelRc::new(VecModel::from(faces)));
+    size_panel(popup.window(), popup.get_layout_width(), popup.get_layout_height());
     sync_notices(app, shell);
 }
 
@@ -836,43 +955,73 @@ fn sync_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) {
             }
         }).collect();
         let notice_h = notice_block(&app.notes);
-        let show_notes = app.popup_open && !app.cfg.notices_hidden && notice_h > 1.0;
+        let show_notes = app.popup_open && !app.closing
+            && popup.window().is_visible() && !shell.borrow().popup_visibility.pending()
+            && !app.cfg.notices_hidden && app.cfg.notice_limit > 0 && notice_h > 1.0;
         (rows, notice_h, show_notes)
     };
-    let revealed = present_notices(app, shell, &popup, rows, notice_h, show_notes);
-    if revealed && popup.window().is_visible() && popup.get_slide() < 1.0 && shell.borrow().slide_timer.is_none() {
-        slide_notices(shell, true);
-    }
+    present_notices(app, shell, &popup, rows, notice_h, show_notes);
 }
 
-fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &Popup, rows: Vec<Notice>, notice_h: f32, show: bool) -> bool {
+fn present_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, popup: &Popup, rows: Vec<Notice>, notice_h: f32, show: bool) {
     if !show {
         if shell.borrow().notice_slide.is_some() {
-            return false;
+            return;
         }
         hide_notices(shell);
-        return false;
+        return;
     }
-    let notices = ensure_notices(app, shell);
     let width = popup.get_layout_width();
+    if notices_of(shell).is_none() {
+        if shell.borrow().notices_creating { return; }
+        shell.borrow_mut().notices_creating = true;
+        let app = app.clone();
+        let shell = shell.clone();
+        let _ = slint::spawn_local(async move {
+            windows::create(NOTICES_CLASS, || {
+                let notices = build_notices(&app, &shell);
+                notices.set_pane_width(width);
+                notices.set_notice_h(notice_h);
+                notices.set_notices(ModelRc::new(VecModel::from(rows)));
+                notices.set_slide(notice_h);
+                size_panel(notices.window(), width, notice_h);
+                Some(notices)
+            }).await;
+            shell.borrow_mut().notices_creating = false;
+            sync_notices(&app, &shell);
+        });
+        return;
+    }
+    let notices = notices_of(shell).unwrap();
     if (notices.get_pane_width() - width).abs() > 0.5 {
         notices.set_pane_width(width);
     }
     let revealed = !notices.window().is_visible();
     notices.set_notice_h(notice_h);
     notices.set_notices(ModelRc::new(VecModel::from(rows)));
+    size_panel(notices.window(), width, notice_h);
     if !revealed {
-        return false;
+        return;
     }
     notices.set_slide(notice_h);
-    notices.show().ok();
-    let _ = notices.window().with_winit_window(|window| {
-        window.set_title("yoin-notices");
+    let app_ready = app.clone();
+    let shell_ready = shell.clone();
+    let visibility = shell.borrow().notices_visibility.clone();
+    visibility.show_ready(&notices, NOTICES_CLASS, move |notices| {
+        let show = {
+            let app = app_ready.borrow();
+            app.popup_open && !app.closing && !app.cfg.notices_hidden && app.cfg.notice_limit > 0
+        };
+        if !show {
+            hide_notices(&shell_ready);
+            return;
+        }
+        size_panel(notices.window(), notices.get_pane_width(), notices.get_notice_h());
+        if let Some(popup) = popup_of(&shell_ready) {
+            let _ = popup.window().with_winit_window(|window| window.focus_window());
+        }
+        slide_notices(&shell_ready, true);
     });
-    let _ = popup.window().with_winit_window(|window| {
-        window.focus_window();
-    });
-    true
 }
 
 fn stop_notice_slide(shell: &RefCell<Shell>) {
@@ -935,13 +1084,17 @@ fn slide_notices(shell: &Rc<RefCell<Shell>>, open: bool) {
     shell.borrow_mut().notice_slide = Some(timer);
 }
 
-fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
+fn build_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices {
     if let Some(existing) = notices_of(shell) {
         return existing;
     }
-    let notices = Notices::new().unwrap();
-    let _ = notices.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
-    bind_notice_focus(&notices, app.clone());
+    let notices = windows::new_panel(NOTICES_CLASS, Notices::new).unwrap();
+    let visibility = shell.borrow().notices_visibility.clone();
+    let _ = notices.window().on_close_requested(move || {
+        visibility.cancel();
+        slint::CloseRequestResponse::HideWindow
+    });
+    bind_notice_focus(&notices, app.clone(), shell.borrow().notices_visibility.clone());
     wire_notices(app, shell, &notices);
     let choice = app.borrow().cfg.theme.clone();
     let dark = app.borrow().dark;
@@ -956,9 +1109,10 @@ fn ensure_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> Notices
     notices
 }
 
-fn bind_notice_focus(notices: &Notices, app: Rc<RefCell<App>>) {
+fn bind_notice_focus(notices: &Notices, app: Rc<RefCell<App>>, frames: windows::Visibility) {
     let _ = notices.window().on_winit_window_event(move |_window, event| {
         match event {
+            winit::event::WindowEvent::RedrawRequested => frames.redraw_requested(),
             winit::event::WindowEvent::Focused(true) => {
                 let mut app = app.borrow_mut();
                 app.popup_focused = true;
@@ -1004,6 +1158,16 @@ fn wire_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, notices: &No
         }
         kick_notice_anim(&app_x, &shell_x);
     });
+}
+
+fn loaded_notes(limit: u32) -> Vec<notices::Note> {
+    let mut notes = notices::load();
+    let dropped = notices::trim(&mut notes, limit as usize);
+    notices::forget(&dropped);
+    if !dropped.is_empty() {
+        notices::save(&notes);
+    }
+    notes
 }
 
 fn notice_block(notes: &[notices::Note]) -> f32 {
@@ -1067,6 +1231,105 @@ fn step_notices(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>) -> bool {
     app.borrow().notes.iter().any(|note| note.closing || note.fade < 1.0)
 }
 
+#[derive(serde::Deserialize)]
+struct GhRelease {
+    tag_name: String,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    prerelease: bool,
+}
+
+#[derive(Debug)]
+enum ReleaseLook {
+    Latest,
+    Newer(String),
+    Failed,
+}
+
+fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let text = text.strip_prefix('v').unwrap_or(text);
+    let mut parts = text.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((major, minor, patch))
+}
+
+fn release_status(current: &str, body: &str) -> Result<ReleaseLook, ()> {
+    let releases: Vec<GhRelease> = serde_json::from_str(body).map_err(|_| ())?;
+    let current = parse_version(current).ok_or(())?;
+    let mut best: Option<(u64, u64, u64)> = None;
+    for release in releases {
+        if release.draft || release.prerelease {
+            continue;
+        }
+        let Some(version) = parse_version(&release.tag_name) else { continue };
+        if best.is_none_or(|have| version > have) {
+            best = Some(version);
+        }
+    }
+    let Some(best) = best else { return Ok(ReleaseLook::Latest) };
+    if best > current {
+        Ok(ReleaseLook::Newer(format!("{}.{}.{}", best.0, best.1, best.2)))
+    } else {
+        Ok(ReleaseLook::Latest)
+    }
+}
+
+fn release_page(version: &str) -> Option<String> {
+    let (major, minor, patch) = parse_version(version)?;
+    if format!("{major}.{minor}.{patch}") != version {
+        return None;
+    }
+    Some(format!("https://github.com/yrmuq/yoin/releases/tag/v{version}"))
+}
+
+async fn fetch_latest() -> ReleaseLook {
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(8)).use_rustls_tls().build() {
+        Ok(client) => client,
+        Err(_) => return ReleaseLook::Failed,
+    };
+    let text = match client
+        .get("https://api.github.com/repos/yrmuq/yoin/releases?per_page=100")
+        .header("User-Agent", "yoin")
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+    {
+        Ok(response) => match response.error_for_status() {
+            Ok(response) => response.text().await.unwrap_or_default(),
+            Err(_) => return ReleaseLook::Failed,
+        },
+        Err(_) => return ReleaseLook::Failed,
+    };
+    release_status(env!("CARGO_PKG_VERSION"), &text).unwrap_or(ReleaseLook::Failed)
+}
+
+fn show_release(settings: &Settings, catalog: &Catalog, look: ReleaseLook) {
+    match look {
+        ReleaseLook::Failed => {
+            settings.set_update_ok(false);
+            settings.set_update_has_download(false);
+            settings.set_update_note(catalog.tr(61).into());
+        }
+        ReleaseLook::Latest => {
+            settings.set_update_ok(true);
+            settings.set_update_has_download(false);
+            settings.set_update_note(format!("✓ {}", catalog.tr(59)).into());
+        }
+        ReleaseLook::Newer(version) => {
+            settings.set_update_ok(false);
+            settings.set_update_has_download(true);
+            settings.set_update_version(version.as_str().into());
+            settings.set_update_note(catalog.trf(60, &[&version]).into());
+        }
+    }
+}
+
 fn version_burst(count: &mut u8, last: &mut Option<Instant>, now: Instant) -> bool {
     if last.is_some_and(|at| now.saturating_duration_since(at) > Duration::from_millis(2000)) {
         *count = 0;
@@ -1110,6 +1373,25 @@ mod version_burst_tests {
     }
 }
 
+#[cfg(test)]
+mod release_tests {
+    use super::*;
+
+    #[test]
+    fn a_newer_stable_release_is_the_one_offered() {
+        let body = r#"[{"tag_name":"v0.2.0","draft":true,"prerelease":false},{"tag_name":"v0.9.0","draft":false,"prerelease":true},{"tag_name":"v0.1.5","draft":false,"prerelease":false},{"tag_name":"v0.1.4","draft":false,"prerelease":false}]"#;
+        match release_status("0.1.0", body) {
+            Ok(ReleaseLook::Newer(version)) => assert_eq!(version, "0.1.5"),
+            other => panic!("expected 0.1.5, got {other:?}"),
+        }
+        assert!(matches!(release_status("0.1.5", body), Ok(ReleaseLook::Latest)));
+        assert!(matches!(release_status("0.2.0", body), Ok(ReleaseLook::Latest)));
+        assert!(release_page("0.1.5").as_deref() == Some("https://github.com/yrmuq/yoin/releases/tag/v0.1.5"));
+        assert!(release_page("v0.1.5").is_none());
+        assert!(release_status("0.1.0", "not json").is_err());
+    }
+}
+
 fn dev_icon_report(app: &App) -> String {
     let mut lines = Vec::new();
     let mut seen = Vec::new();
@@ -1120,17 +1402,18 @@ fn dev_icon_report(app: &App) -> String {
         seen.push(name);
         lines.push(icons::describe_icon(name));
     }
-    for id in &app.cfg.buttons {
+    for (index, id) in app.cfg.buttons.iter().enumerate() {
         if id.is_empty() {
             continue;
         }
         let known = app.entities.get(id);
         let on = ha::button_on(known);
-        let kind = ha::entity_kind(id, known);
+        let automatic = ha::entity_kind(id, known);
+        let kind = app.cfg.icons.get(index).filter(|kind| !kind.is_empty()).cloned().unwrap_or(automatic);
         match icons::chosen_icon_name(&kind, on) {
             Some(name) if !seen.contains(&name) => {
                 seen.push(name);
-                lines.push(icons::describe_icon(name));
+                lines.push(format!("{name} - svg (Breeze)"));
             }
             Some(_) => {}
             None => {
@@ -1147,12 +1430,23 @@ fn dev_icon_report(app: &App) -> String {
 fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     let app_ref = app.borrow();
     let cat = &app_ref.catalog;
+    fill_connection(&app_ref, settings);
+    settings.set_auto_check_updates(app_ref.cfg.auto_check_updates);
+    settings.set_t_auto_check_updates(cat.tr(101).into());
+    settings.set_t_check_update(cat.tr(102).into());
+    settings.set_t_icon_sources(cat.tr(103).into());
+    settings.set_t_button_icon_scale(cat.tr(104).into());
+    settings.set_t_button_icon_hint(cat.tr(105).into());
+    settings.set_t_tile_content_offset(cat.tr(106).into());
+    settings.set_t_tile_content_hint(cat.tr(107).into());
     settings.set_t_connection(cat.tr(10).into());
-    settings.set_t_buttons(cat.tr(11).into());
-    settings.set_t_appearance(cat.tr(18).into());
+    settings.set_t_devices(cat.tr(11).into());
+    settings.set_t_general(cat.tr(18).into());
     settings.set_t_address(cat.tr(3).into());
     settings.set_t_token(cat.tr(4).into());
     settings.set_t_token_hint(cat.tr(25).into());
+    settings.set_t_show_token(cat.tr(108).into());
+    settings.set_t_hide_token(cat.tr(109).into());
     settings.set_t_device(cat.tr(5).into());
     settings.set_t_device_hint(cat.tr(6).into());
     settings.set_t_autostart(cat.tr(7).into());
@@ -1162,10 +1456,30 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_t_theme(cat.tr(14).into());
     settings.set_t_layout(cat.tr(34).into());
     settings.set_t_size(cat.tr(37).into());
-    settings.set_t_size_hint(cat.tr(39).into());
+    settings.set_t_notices(cat.tr(57).into());
     settings.set_t_rename(cat.tr(38).into());
     settings.set_t_about(cat.tr(51).into());
-    settings.set_t_about_body(cat.tr(52).into());
+    settings.set_t_repository(cat.tr(53).into());
+    settings.set_t_version_label(cat.tr(54).into());
+    settings.set_t_download(cat.tr(62).into());
+    settings.set_t_reset(cat.tr(63).into());
+    settings.set_t_window_width(cat.tr(64).into());
+    settings.set_t_window_height(cat.tr(65).into());
+    settings.set_t_logo_size(cat.tr(66).into());
+    settings.set_t_lock_size(cat.tr(67).into());
+    settings.set_t_add(cat.tr(68).into());
+    settings.set_t_edit(cat.tr(69).into());
+    settings.set_t_entity(cat.tr(70).into());
+    settings.set_t_icon(cat.tr(71).into());
+    settings.set_t_cancel(cat.tr(72).into());
+    settings.set_t_remove(cat.tr(73).into());
+    settings.set_t_reorder(cat.tr(74).into());
+    settings.set_t_license(cat.tr(75).into());
+    settings.set_t_component(cat.tr(76).into());
+    settings.set_t_upstream(cat.tr(77).into());
+    settings.set_t_integration(cat.tr(78).into());
+    settings.set_icon_names(ModelRc::new(VecModel::from(icons::BUTTON_ICONS.iter().map(|(_, id)| cat.tr(*id).into()).collect::<Vec<_>>())));
+    settings.set_part_details(ModelRc::new(VecModel::from((97..=100).map(|id| cat.tr(id).into()).collect::<Vec<_>>())));
     settings.set_t_source("https://github.com/yrmuq/yoin".into());
     settings.set_version(env!("CARGO_PKG_VERSION").into());
     settings.set_address(app_ref.cfg.url.clone().into());
@@ -1192,24 +1506,81 @@ fn fill_text(app: &Rc<RefCell<App>>, settings: &Settings) {
     settings.set_layout_names(ModelRc::new(VecModel::from(layout_names)));
     settings.set_layout_index(layout_index);
     settings.set_button_size_value(button_size);
+    settings.set_notice_limit_value(app.borrow().cfg.notice_limit as f32);
 }
 
 fn fill_rows(app: &Rc<RefCell<App>>, settings: &Settings) {
-    let app_ref = app.borrow();
-    let unset = app_ref.catalog.tr(12);
-    let mut labels = vec![unset.into()];
-    labels.extend(app_ref.names.iter().map(|e| e.name.clone().into()));
-    settings.set_entity_names(ModelRc::new(VecModel::from(labels)));
-    let rows: Vec<Choice> = app_ref.cfg.buttons.iter().enumerate().map(|(slot, id)| {
-        let index = if id.is_empty() {
-            0
-        } else {
-            app_ref.names.iter().position(|e| e.entity_id == *id).map(|i| i as i32 + 1).unwrap_or(0)
-        };
-        let label = app_ref.cfg.labels.get(slot).cloned().unwrap_or_default();
-        Choice { index, label: label.into(), editing: app_ref.editing == Some(slot) }
+    let app = app.borrow();
+    let unset = app.catalog.tr(12);
+    let rows: Vec<Choice> = app.cfg.buttons.iter().enumerate().map(|(slot, id)| {
+        let known = app.entities.get(id);
+        let custom = app.cfg.labels.get(slot).map(String::as_str).unwrap_or("");
+        let automatic = ha::entity_kind(id, known);
+        let kind = app.cfg.icons.get(slot).filter(|kind| !kind.is_empty()).cloned().unwrap_or(automatic);
+        let on = ha::button_on(known);
+        let icon = icons::button_icon(&kind, on, icon_px(22.0, settings.window().scale_factor()));
+        Choice {
+            label: ha::tray_label(id, known, custom, &unset, true).into(),
+            entity: id.clone().into(),
+            state: if id.is_empty() { unset.clone() } else { known.map(|entity| entity.state.clone()).unwrap_or_else(|| app.catalog.tr(79)) }.into(),
+            kind: kind.into(), on,
+            has_icon: icon.is_some(),
+            tint: icon.as_ref().map(|icon| icon.tint).unwrap_or(false),
+            icon: icon.map(|icon| icon.image).unwrap_or_default(),
+        }
     }).collect();
-    settings.set_rows(ModelRc::new(VecModel::from(rows)));
+    let model = settings.get_rows();
+    if let Some(model) = model.as_any().downcast_ref::<VecModel<Choice>>() {
+        if model.row_count() == rows.len() {
+            for (index, row) in rows.into_iter().enumerate() { model.set_row_data(index, row); }
+        } else {
+            model.set_vec(rows);
+        }
+    } else {
+        settings.set_rows(ModelRc::new(VecModel::from(rows)));
+    }
+}
+
+fn open_button_editor(state: &Rc<RefCell<App>>, settings: &Settings, index: Option<usize>) {
+    let mut app = state.borrow_mut();
+    if index.is_some_and(|index| index >= app.cfg.buttons.len()) || (index.is_none() && app.cfg.buttons.len() >= config::MAX_BUTTONS) { return; }
+    let current = index.map(|index| app.cfg.buttons[index].clone()).unwrap_or_default();
+    let mut ids = vec![String::new()];
+    let mut names = vec![app.catalog.tr(12).into()];
+    for entity in &app.names {
+        ids.push(entity.entity_id.clone());
+        names.push(format!("{} ({})", entity.name, entity.entity_id).into());
+    }
+    if !ids.contains(&current) {
+        ids.push(current.clone());
+        names.push(current.clone().into());
+    }
+    let entity = ids.iter().position(|id| id == &current).unwrap_or(0) as i32;
+    let kind = index.and_then(|index| app.cfg.icons.get(index)).map(String::as_str).unwrap_or("");
+    let icon = icons::BUTTON_ICONS.iter().position(|(key, _)| *key == kind).unwrap_or(0) as i32;
+    let label = index.and_then(|index| app.cfg.labels.get(index)).cloned().unwrap_or_default();
+    app.editing = index;
+    app.editor_ids = ids;
+    drop(app);
+    settings.set_entity_names(ModelRc::new(VecModel::from(names)));
+    settings.set_edit_entity(entity);
+    settings.set_edit_icon(icon);
+    settings.set_edit_name(label.into());
+    settings.set_adding(index.is_none());
+    preview_button_icon(state, settings, entity, icon);
+    settings.invoke_open_editor();
+}
+
+fn preview_button_icon(app: &Rc<RefCell<App>>, settings: &Settings, entity: i32, icon: i32) {
+    let app = app.borrow();
+    let Some(id) = app.editor_ids.get(entity as usize) else { return };
+    let known = app.entities.get(id);
+    let Some((kind, _)) = icons::BUTTON_ICONS.get(icon as usize) else { return };
+    let automatic = ha::entity_kind(id, known);
+    let kind = if kind.is_empty() { automatic.as_str() } else { kind };
+    let image = icons::button_icon(kind, ha::button_on(known), icon_px(32.0, settings.window().scale_factor()));
+    settings.set_edit_preview_tint(image.as_ref().map(|image| image.tint).unwrap_or(false));
+    settings.set_edit_preview(image.map(|image| image.image).unwrap_or_default());
 }
 
 fn apply_theme(
@@ -1286,88 +1657,42 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     let app_s = ctx.app.clone();
     let tx = ctx.client_tx.clone();
     let settings_s = settings.as_weak();
+    let visibility_s = ctx.shell.borrow().settings_visibility.clone();
     settings.on_save(move || {
         if let Some(settings) = settings_s.upgrade() {
             if store(&app_s, &settings, &tx, true) {
-                settings.hide().ok();
+                visibility_s.hide(&settings);
             }
         }
     });
     let app_a = ctx.app.clone();
-    let shell_a = ctx.shell.clone();
     let settings_a = settings.as_weak();
     settings.on_add(move || {
-        if app_a.borrow().cfg.buttons.len() >= config::MAX_BUTTONS {
-            return;
-        }
-        app_a.borrow_mut().cfg.buttons.push(String::new());
-        app_a.borrow_mut().cfg.labels.push(String::new());
-        let _ = config::save_config(&app_a.borrow().cfg, &config::config_path());
-        if let Some(settings) = settings_a.upgrade() {
-            fill_rows(&app_a, &settings);
-        }
-        if let Some(_popup) = popup_of(&shell_a) {
-            refresh_popup(&app_a, &shell_a);
-        }
+        if let Some(settings) = settings_a.upgrade() { open_button_editor(&app_a, &settings, None); }
     });
-    bind_move(&ctx.app, &ctx.shell, settings, true);
-    bind_move(&ctx.app, &ctx.shell, settings, false);
-    let app_r = ctx.app.clone();
-    let shell_r = ctx.shell.clone();
-    let settings_r = settings.as_weak();
+    let ctx_move = ctx_from(ctx);
+    let settings_move = settings.as_weak();
+    settings.on_move_button(move |from, to| {
+        if !config::move_button(&mut ctx_move.app.borrow_mut().cfg, from as usize, to as usize) { return; }
+        let _ = config::save_config(&ctx_move.app.borrow().cfg, &config::config_path());
+        if let Some(settings) = settings_move.upgrade() { fill_rows(&ctx_move.app, &settings); }
+        refresh_popup(&ctx_move.app, &ctx_move.shell);
+    });
+    let ctx_remove = ctx_from(ctx);
+    let settings_remove = settings.as_weak();
     settings.on_remove(move |index| {
-        let mut cfg_app = app_r.borrow_mut();
-        if cfg_app.cfg.buttons.len() <= 1 {
-            return;
-        }
+        let mut app = ctx_remove.app.borrow_mut();
         let index = index as usize;
-        if index < cfg_app.cfg.buttons.len() {
-            cfg_app.cfg.buttons.remove(index);
-            if index < cfg_app.cfg.labels.len() {
-                cfg_app.cfg.labels.remove(index);
-            }
-        }
-        if cfg_app.editing == Some(index) {
-            cfg_app.editing = None;
-        }
-        drop(cfg_app);
-        let _ = config::save_config(&app_r.borrow().cfg, &config::config_path());
-        if let Some(settings) = settings_r.upgrade() {
-            fill_rows(&app_r, &settings);
-        }
-        if let Some(_popup) = popup_of(&shell_r) {
-            refresh_popup(&app_r, &shell_r);
-        }
-    });
-    let app_k = ctx.app.clone();
-    let shell_k = ctx.shell.clone();
-    let settings_k = settings.as_weak();
-    settings.on_pick(move |row, index| {
-        let mut borrowed = app_k.borrow_mut();
-        let row = row as usize;
-        if row >= borrowed.cfg.buttons.len() {
-            return;
-        }
-        let id = if index <= 0 {
-            String::new()
-        } else {
-            borrowed.names.get(index as usize - 1).map(|e| e.entity_id.clone()).unwrap_or_default()
-        };
-        if borrowed.cfg.buttons[row] == id {
-            return;
-        }
-        borrowed.cfg.buttons[row] = id;
-        if row < borrowed.cfg.labels.len() {
-            borrowed.cfg.labels[row].clear();
-        }
-        drop(borrowed);
-        let _ = config::save_config(&app_k.borrow().cfg, &config::config_path());
-        if let Some(_popup) = popup_of(&shell_k) {
-            refresh_popup(&app_k, &shell_k);
-        }
-        if let Some(settings) = settings_k.upgrade() {
-            fill_rows(&app_k, &settings);
-        }
+        if app.cfg.buttons.len() <= 1 || index >= app.cfg.buttons.len() { return; }
+        config::align_buttons(&mut app.cfg);
+        app.cfg.buttons.remove(index);
+        app.cfg.labels.remove(index);
+        app.cfg.icons.remove(index);
+        app.editing = None;
+        let _ = config::save_config(&app.cfg, &config::config_path());
+        drop(app);
+        if let Some(settings) = settings_remove.upgrade() { fill_rows(&ctx_remove.app, &settings); }
+        refresh_popup(&ctx_remove.app, &ctx_remove.shell);
     });
     let app_l = ctx.app.clone();
     let settings_l = settings.as_weak();
@@ -1410,47 +1735,39 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
     let app_e = ctx.app.clone();
     let settings_e = settings.as_weak();
     settings.on_edit(move |index| {
-        let index = index as usize;
-        let mut app = app_e.borrow_mut();
-        if index >= app.cfg.buttons.len() {
-            return;
-        }
-        app.editing = if app.editing == Some(index) { None } else { Some(index) };
-        drop(app);
-        if let Some(settings) = settings_e.upgrade() {
-            fill_rows(&app_e, &settings);
-        }
+        if let Some(settings) = settings_e.upgrade() { open_button_editor(&app_e, &settings, Some(index as usize)); }
     });
-    let app_n = ctx.app.clone();
-    let shell_n = ctx.shell.clone();
-    let settings_n = settings.as_weak();
-    settings.on_rename(move |index, text| {
-        let index = index as usize;
-        let text = text.trim().to_string();
-        {
-            let mut app = app_n.borrow_mut();
-            if index >= app.cfg.buttons.len() {
-                return;
+    let app_preview = ctx.app.clone();
+    let settings_preview = settings.as_weak();
+    settings.on_editor_choice(move |entity, icon| {
+        if let Some(settings) = settings_preview.upgrade() { preview_button_icon(&app_preview, &settings, entity, icon); }
+    });
+    let ctx_edit = ctx_from(ctx);
+    let settings_edit = settings.as_weak();
+    settings.on_apply_button(move |entity, label, icon| {
+        let mut app = ctx_edit.app.borrow_mut();
+        let Some(id) = app.editor_ids.get(entity as usize).cloned() else { return };
+        let Some((kind, _)) = icons::BUTTON_ICONS.get(icon as usize) else { return };
+        let index = match app.editing {
+            Some(index) if index < app.cfg.buttons.len() => index,
+            None if app.cfg.buttons.len() < config::MAX_BUTTONS => {
+                app.cfg.buttons.push(String::new());
+                app.cfg.buttons.len() - 1
             }
-            config::align_labels(&mut app.cfg);
-            if app.cfg.labels.get(index).map(String::as_str) == Some(text.as_str()) {
-                app.editing = None;
-                drop(app);
-                if let Some(settings) = settings_n.upgrade() {
-                    fill_rows(&app_n, &settings);
-                }
-                return;
-            }
-            app.cfg.labels[index] = text;
-            app.editing = None;
+            _ => return,
+        };
+        config::align_buttons(&mut app.cfg);
+        app.cfg.buttons[index] = id;
+        app.cfg.labels[index] = label.trim().chars().take(80).collect();
+        app.cfg.icons[index] = (*kind).into();
+        app.editing = None;
+        let _ = config::save_config(&app.cfg, &config::config_path());
+        drop(app);
+        if let Some(settings) = settings_edit.upgrade() {
+            settings.invoke_close_editor();
+            fill_rows(&ctx_edit.app, &settings);
         }
-        let _ = config::save_config(&app_n.borrow().cfg, &config::config_path());
-        if let Some(settings) = settings_n.upgrade() {
-            fill_rows(&app_n, &settings);
-        }
-        if let Some(_popup) = popup_of(&shell_n) {
-            refresh_popup(&app_n, &shell_n);
-        }
+        refresh_popup(&ctx_edit.app, &ctx_edit.shell);
     });
     let ctx_y = ctx_from(ctx);
     settings.on_layout(move |index| {
@@ -1476,14 +1793,55 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
             refresh_popup(&ctx_z.app, &ctx_z.shell);
         }
     });
+    let ctx_count = ctx_from(ctx);
+    let settings_count = settings.as_weak();
+    settings.on_notice_limit(move |value| {
+        let limit = value.round().clamp(0.0, 11.0) as u32;
+        if let Some(settings) = settings_count.upgrade() {
+            settings.set_notice_limit_value(limit as f32);
+        }
+        if ctx_count.app.borrow().cfg.notice_limit == limit {
+            return;
+        }
+        let dropped = {
+            let mut app = ctx_count.app.borrow_mut();
+            app.cfg.notice_limit = limit;
+            let dropped = notices::trim(&mut app.notes, limit as usize);
+            let _ = config::save_config(&app.cfg, &config::config_path());
+            notices::save(&app.notes);
+            dropped
+        };
+        notices::forget(&dropped);
+        if limit == 0 {
+            stop_notice_slide(&ctx_count.shell);
+        }
+        if let Some(_popup) = popup_of(&ctx_count.shell) {
+            refresh_popup(&ctx_count.app, &ctx_count.shell);
+        }
+    });
     settings.on_open_source(move || {
         let _ = std::process::Command::new("xdg-open").arg("https://github.com/yrmuq/yoin").spawn();
+    });
+    settings.on_open_link(move |url| {
+        let url = url.to_string();
+        let allowed = [
+            "https://github.com/yrmuq/yoin/blob/main/LICENSE",
+            "https://github.com/slint-ui/slint",
+            "https://github.com/iovxw/ksni",
+            "https://github.com/linebender/resvg",
+            "https://github.com/KDE/breeze-icons",
+        ]
+        .contains(&url.as_str());
+        if allowed {
+            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+        }
     });
     let taps = Rc::new(Cell::new(0u8));
     let tap_at = Rc::new(Cell::new(None::<Instant>));
     let app_dev = ctx.app.clone();
     let settings_dev = settings.as_weak();
-    settings.on_version_tapped(move || {
+    let ctx_logo = ctx_from(ctx);
+    settings.on_logo_tapped(move || {
         let mut count = taps.get();
         let mut last = tap_at.get();
         if !version_burst(&mut count, &mut last, Instant::now()) {
@@ -1496,9 +1854,159 @@ fn wire_settings(ctx: &Ctx, settings: &Settings) {
         let Some(settings) = settings_dev.upgrade() else { return };
         let open = !settings.get_dev_open();
         settings.set_dev_open(open);
+        if !open && settings.get_page() == 4 {
+            settings.set_page(3);
+        }
+        ctx_logo.app.borrow_mut().cfg.dev_tab = open;
+        let _ = config::save_config(&ctx_logo.app.borrow().cfg, &config::config_path());
         if open {
             settings.set_dev_report(dev_icon_report(&app_dev.borrow()).into());
         }
+    });
+    let ctx_metrics = ctx_from(ctx);
+    let settings_metrics = settings.as_weak();
+    settings.on_metrics_changed(move || {
+        let Some(settings) = settings_metrics.upgrade() else { return };
+        let width = settings.get_settings_width().clamp(360, 2200) as u32;
+        let height = settings.get_settings_height().clamp(240, 1800) as u32;
+        let logo = settings.get_logo_size().clamp(32, 256) as u32;
+        let icon_scale = settings.get_button_icon_scale().clamp(50, 200) as u32;
+        let tile_offset = settings.get_tile_content_offset().clamp(-100, 100);
+        let changed = {
+            let cfg = &ctx_metrics.app.borrow().cfg;
+            cfg.settings_width != width || cfg.settings_height != height || cfg.logo_size != logo || cfg.button_icon_scale != icon_scale || cfg.tile_content_offset != tile_offset
+        };
+        if !changed {
+            return;
+        }
+        {
+            let mut app = ctx_metrics.app.borrow_mut();
+            app.cfg.settings_width = width;
+            app.cfg.settings_height = height;
+            app.cfg.logo_size = logo;
+            app.cfg.button_icon_scale = icon_scale;
+            app.cfg.tile_content_offset = tile_offset;
+            let _ = config::save_config(&app.cfg, &config::config_path());
+        }
+        apply_metrics(&settings, &ctx_metrics.app.borrow().cfg);
+        refresh_popup(&ctx_metrics.app, &ctx_metrics.shell);
+    });
+    let ctx_lock = ctx_from(ctx);
+    let settings_lock = settings.as_weak();
+    settings.on_lock_window_size_changed(move |locked| {
+        ctx_lock.app.borrow_mut().cfg.lock_window_size = locked;
+        let _ = config::save_config(&ctx_lock.app.borrow().cfg, &config::config_path());
+        if let Some(settings) = settings_lock.upgrade() { apply_metrics(&settings, &ctx_lock.app.borrow().cfg); }
+    });
+    let ctx_reset = ctx_from(ctx);
+    let settings_reset = settings.as_weak();
+    settings.on_reset_general(move || {
+        let Some(settings) = settings_reset.upgrade() else { return };
+        let language = i18n::match_language(&i18n::language_dir(), &i18n::system_languages());
+        let dropped = {
+            let mut app = ctx_reset.app.borrow_mut();
+            app.cfg.language = language;
+            app.cfg.theme = "system".into();
+            app.cfg.layout = "list".into();
+            app.cfg.button_size = 40;
+            app.cfg.notice_limit = 3;
+            app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
+            app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
+            app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            app.cfg.button_icon_scale = config::DEFAULT_BUTTON_ICON_SCALE;
+            app.cfg.tile_content_offset = config::DEFAULT_TILE_CONTENT_OFFSET;
+            app.cfg.lock_window_size = true;
+            app.cfg.dev_tab = false;
+            let dropped = notices::trim(&mut app.notes, 3);
+            let _ = config::save_config(&app.cfg, &config::config_path());
+            notices::save(&app.notes);
+            dropped
+        };
+        notices::forget(&dropped);
+        let name = ctx_reset.app.borrow().cfg.language.clone();
+        ctx_reset.app.borrow_mut().catalog = Catalog::load(&i18n::language_dir(), &name);
+        if let Ok(mut view) = ctx_reset.view.lock() {
+            view.settings = ctx_reset.app.borrow().catalog.tr(1);
+            view.quit = ctx_reset.app.borrow().catalog.tr(2);
+        }
+        ctx_reset.rt.block_on(ctx_reset.tray.update(|_| ()));
+        apply_metrics(&settings, &ctx_reset.app.borrow().cfg);
+        fill_text(&ctx_reset.app, &settings);
+        fill_rows(&ctx_reset.app, &settings);
+        paint_theme(&ctx_reset);
+        if let Some(_popup) = popup_of(&ctx_reset.shell) {
+            refresh_popup(&ctx_reset.app, &ctx_reset.shell);
+        }
+    });
+    let ctx_dev = ctx_from(ctx);
+    let settings_dev_reset = settings.as_weak();
+    settings.on_reset_dev(move || {
+        let Some(settings) = settings_dev_reset.upgrade() else { return };
+        {
+            let mut app = ctx_dev.app.borrow_mut();
+            app.cfg.settings_width = config::DEFAULT_SETTINGS_WIDTH;
+            app.cfg.settings_height = config::DEFAULT_SETTINGS_HEIGHT;
+            app.cfg.logo_size = config::DEFAULT_LOGO_SIZE;
+            app.cfg.button_icon_scale = config::DEFAULT_BUTTON_ICON_SCALE;
+            app.cfg.tile_content_offset = config::DEFAULT_TILE_CONTENT_OFFSET;
+            app.cfg.lock_window_size = true;
+            app.cfg.auto_check_updates = true;
+            let _ = config::save_config(&app.cfg, &config::config_path());
+        }
+        settings.set_auto_check_updates(true);
+        apply_metrics(&settings, &ctx_dev.app.borrow().cfg);
+        refresh_popup(&ctx_dev.app, &ctx_dev.shell);
+    });
+    let app_auto = ctx.app.clone();
+    settings.on_auto_check_updates_changed(move |enabled| {
+        app_auto.borrow_mut().cfg.auto_check_updates = enabled;
+        let _ = config::save_config(&app_auto.borrow().cfg, &config::config_path());
+    });
+    let settings_about = settings.as_weak();
+    settings.on_about_opened(move || {
+        if let Some(settings) = settings_about.upgrade() {
+            if settings.get_auto_check_updates() { settings.invoke_check_update(); }
+        }
+    });
+    let settings_check = settings.as_weak();
+    let app_check = ctx.app.clone();
+    let rt_check = ctx.rt.clone();
+    settings.on_check_update(move || {
+        let Some(settings) = settings_check.upgrade() else { return };
+        if settings.get_checking_update() { return; }
+        settings.set_checking_update(true);
+        settings.set_update_note("".into());
+        settings.set_update_ok(false);
+        settings.set_update_has_download(false);
+        let settings_check = settings_check.clone();
+        let catalog = app_check.borrow().catalog.clone();
+        rt_check.spawn(async move {
+            let found = fetch_latest().await;
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(settings) = settings_check.upgrade() else { return };
+                settings.set_checking_update(false);
+                show_release(&settings, &catalog, found);
+            });
+        });
+    });
+    let app_autostart = ctx.app.clone();
+    let settings_autostart = settings.as_weak();
+    settings.on_autostart_changed(move |enabled| {
+        let Some(settings) = settings_autostart.upgrade() else { return };
+        if let Err(err) = config::apply_autostart(enabled, &config::autostart_path()) {
+            settings.set_autostart(app_autostart.borrow().cfg.autostart);
+            settings.set_status(app_autostart.borrow().catalog.trf(20, &[&err.to_string()]).into());
+            return;
+        }
+        app_autostart.borrow_mut().cfg.autostart = enabled;
+        let _ = config::save_config(&app_autostart.borrow().cfg, &config::config_path());
+        settings.set_status("".into());
+    });
+    let settings_download = settings.as_weak();
+    settings.on_open_download(move || {
+        let Some(settings) = settings_download.upgrade() else { return };
+        let Some(url) = release_page(&settings.get_update_version()) else { return };
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     });
 }
 
@@ -1509,8 +2017,7 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     popup.on_pressed(move |index| {
         let entity = app_p.borrow().cfg.buttons.get(index as usize).cloned().unwrap_or_default();
         if entity.is_empty() {
-            let settings = ensure_settings(&ctx_p);
-            present_settings(&ctx_p, &settings);
+            open_settings(&ctx_p);
             return;
         }
         let state = app_p.borrow().entities.get(&entity).map(|e| e.state.clone()).unwrap_or_default();
@@ -1518,8 +2025,7 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     });
     let ctx_c = ctx_from(ctx);
     popup.on_configure(move || {
-        let settings = ensure_settings(&ctx_c);
-        present_settings(&ctx_c, &settings);
+        open_settings(&ctx_c);
     });
     let ctx_h = ctx_from(ctx);
     popup.on_open_home(move || open_home(&ctx_h));
@@ -1533,6 +2039,9 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     });
     let ctx_notes = ctx_from(ctx);
     popup.on_notices_toggled(move || {
+        if ctx_notes.app.borrow().cfg.notice_limit == 0 {
+            return;
+        }
         let hide = !ctx_notes.app.borrow().cfg.notices_hidden;
         {
             let mut app = ctx_notes.app.borrow_mut();
@@ -1558,46 +2067,6 @@ fn wire_popup(ctx: &Ctx, popup: &Popup) {
     });
 }
 
-fn bind_move(app: &Rc<RefCell<App>>, shell: &Rc<RefCell<Shell>>, settings: &Settings, up: bool) {
-    let app = app.clone();
-    let shell = shell.clone();
-    let settings_w = settings.as_weak();
-    let go = move |index: i32| {
-        let index = index as usize;
-        let mut borrowed = app.borrow_mut();
-        let len = borrowed.cfg.buttons.len();
-        if up {
-            if index == 0 || index >= len {
-                return;
-            }
-            borrowed.cfg.buttons.swap(index, index - 1);
-            if index < borrowed.cfg.labels.len() {
-                borrowed.cfg.labels.swap(index, index - 1);
-            }
-        } else if index + 1 >= len {
-            return;
-        } else {
-            borrowed.cfg.buttons.swap(index, index + 1);
-            if index + 1 < borrowed.cfg.labels.len() {
-                borrowed.cfg.labels.swap(index, index + 1);
-            }
-        }
-        drop(borrowed);
-        let _ = config::save_config(&app.borrow().cfg, &config::config_path());
-        if let Some(settings) = settings_w.upgrade() {
-            fill_rows(&app, &settings);
-        }
-        if let Some(_popup) = popup_of(&shell) {
-            refresh_popup(&app, &shell);
-        }
-    };
-    if up {
-        settings.on_up(go);
-    } else {
-        settings.on_down(go);
-    }
-}
-
 fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::UnboundedSender<ClientCmd>, close: bool) -> bool {
     let mut cfg = app.borrow().cfg.clone();
     cfg.url = settings.get_address().to_string();
@@ -1607,7 +2076,6 @@ fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::Un
         cfg.device_name = config::hostname();
         settings.set_device(cfg.device_name.clone().into());
     }
-    cfg.autostart = settings.get_autostart();
     if cfg.url.is_empty() || cfg.token.is_empty() {
         settings.set_status(app.borrow().catalog.tr(19).into());
         return false;
@@ -1619,15 +2087,14 @@ fn store(app: &Rc<RefCell<App>>, settings: &Settings, tx: &tokio::sync::mpsc::Un
     if cfg.device_id.is_empty() {
         cfg.device_id = uuid::Uuid::new_v4().simple().to_string();
     }
-    if let Err(err) = config::apply_autostart(cfg.autostart, &config::autostart_path()) {
-        settings.set_status(app.borrow().catalog.trf(20, &[&err.to_string()]).into());
-        return false;
-    }
     app.borrow_mut().cfg = cfg;
     if config::save_config(&app.borrow().cfg, &config::config_path()).is_err() {
         return false;
     }
-    settings.set_status(app.borrow().catalog.tr(21).into());
+    app.borrow_mut().status.clear();
+    app.borrow_mut().connection = 21;
+    fill_connection(&app.borrow(), settings);
+    settings.set_status("".into());
     start_client(app, tx);
     close
 }

@@ -4,27 +4,29 @@ Read only the row the task needs.
 
 ## Own code
 - `src/main.rs` — starts the tray, the button window, notices, and settings.
+- `src/windows.rs` — sets initial panel attributes, serializes component construction and native window creation, preserves each taskbar class, and runs panel setup after the native window has rendered its first frame.
 - `src/tray.rs` — the StatusNotifier icon. Left click toggles the window.
 - `src/client.rs` — the Home Assistant websocket: register, call a service, follow state.
 - `src/ha.rs` — service URLs and which domains toggle.
-- `src/config.rs` — `~/.config/yoin/config.json`.
-- `src/notices.rs` — the newest three notices.
+- `src/config.rs` — configuration, aligned button labels/icons, drag ordering, and locked or remembered settings dimensions.
+- `src/notices.rs` — the newest notices. The count is a setting, from 0 to 11.
 - `src/notify.rs` — a desktop notification on the session bus.
 - `src/place.rs` — where the window opens, and the KWin rule in `kwin/placer.js`.
 - `src/theme.rs` — the KDE color scheme and the font.
-- `src/icons.rs` — Breeze icons, including the sideways arrow.
+- `src/icons.rs`, `ui/icons/` — bundled Breeze choices for Home Assistant buttons and system-theme header icons; only the sideways switch is rasterized.
 - `src/i18n.rs` — `languages/*.ini`. A line is `id = English original = text shown`.
-- `ui/app.slint` — the button window, the notices, and settings.
+- `ui/app.slint` — tray windows and settings, button tabs, draggable cards, the child button editor, About, and Dev size controls.
 - `languages/` — `English.ini` and `Russian.ini`.
 
 ## Packaging
-- `packaging/appimage/build.sh` — builds the Rust image and pins `appimagetool`.
-- `.github/workflows/appimage.yml` — builds a version tag. `X.Y.0` is a release. Any other `X.Y.Z` is a prerelease.
-- `.github/workflows/release.yml` — a merge commit from `dev` into `main` raises Y and publishes.
-- `.github/workflows/dev.yml` — manual draft from `dev`. It does not take a version number.
+- `packaging/appimage/build.sh` — builds the x86_64 AppImage, its `.zsync`, and the checksum, and pins `appimagetool`.
+- `.github/workflows/appimage.yml` — manual image build. It does not publish a release.
+- `.github/workflows/release.yml` — a merge commit from `dev` into `main` raises Y, publishes `X.Y.0`, and merges that version back into `dev`.
+- `.github/workflows/dev.yml` — every push to `dev` updates the draft. It does not take a version number or create a tag.
 - `.github/workflows/deps.yml` — Dependabot prerelease on `deps`. It does not change `main`.
-- `.github/workflows/pins.yml` — `appimagetool` pin, on the 28th. Same prerelease path, not `main`.
-- `packaging/release/` — version bump and notes. Not the program.
+- `.github/workflows/pins.yml` — `appimagetool` pin, Friday 09:00 UTC. Same prerelease path, not `main`.
+- `.github/workflows/sync-deps.yml` — on a push to `main`, updates `deps` from `main` and keeps commits that exist only on `deps`.
+- `packaging/release/` — version bump and notes. Not the program. The commands are Rust, in `packaging/tools`.
 
 ## Libraries
 - `slint` — the windows. FemtoVG draws them.
