@@ -6371,7 +6371,7 @@ dependencies = [
 
 [[package]]
 name = "yoin"
-version = "0.15.2"
+version = "0.15.3"
 dependencies = [
  "futures-util",
  "ksni",
